@@ -1,11 +1,13 @@
 config {
-  type: "table",
+  type: "incremental",
   schema: "BI",
-  name: "profiling_dashboard_quick_win_TEST",
+  name: "profiling_dashboard_quick_win",
   tags: ["dashboard", "diario"],
-  description: "Tabla consolidada para Dashboard Quick Win. Unifica perfil, calculadora y asesores.",
+  uniqueKey: ["lead_id"],
+  description: "Tabla consolidada incremental. Actualiza leads existentes e inserta nuevos.",
   bigquery: {
-    partitionBy: "DATE(Fecha_creacion)"
+    partitionBy: "DATE(Fecha_creacion)",
+    updatePartitionFilter: "Fecha_creacion >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)"
   }
 }
 
@@ -68,7 +70,7 @@ stg_calculator_fam AS (
     valor_credito_uvr_20_anios, valor_credito_uvr_30_anios, credito_maximo_segun_disponible_pesos,
     credito_maximo_segun_disponible_uvr, calificacion, koggi_profiling, indicador_ley_vivienda, ingresos, maximo_cuota_ley_vivienda,
     cuotas_titular, gastos_familiares
-  FROM ${ref("src_calculator_fam")}
+  FROM ${ref("src_calculator_fam")} 
   QUALIFY ROW_NUMBER() OVER(PARTITION BY id_lead ORDER BY timestamp_registro DESC) = 1
 ),
 
@@ -87,7 +89,7 @@ grupos_usuarios AS (
   WHERE u.rn = 1
 ),
 
--- 6. Pre-ensamble (Union de datos)
+-- 6. Ensamble Final
 quick_win_source_data AS (
   SELECT
     p.lead_id,
@@ -174,7 +176,7 @@ quick_win_source_data AS (
   LEFT JOIN ${ref("tbl_looker_board")} AS look ON ent.id_entity_database = look.entity_id
 )
 
--- 7. Selección Final con Hash
+-- 7. Selección Final
 SELECT
   t.*,
   TO_HEX(MD5(TO_JSON_STRING(t))) AS fila_hash,
