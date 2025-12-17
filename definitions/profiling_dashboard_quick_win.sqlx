@@ -1,7 +1,7 @@
 config {
   type: "incremental",
   schema: "BI",
-  name: "profiling_dashboard_quick_win",
+  name: "profiling_dashboard_quick_win_TEST",
   tags: ["dashboard", "diario"],
   uniqueKey: ["lead_id"],
   description: "Tabla consolidada incremental. Actualiza leads existentes e inserta nuevos.",
