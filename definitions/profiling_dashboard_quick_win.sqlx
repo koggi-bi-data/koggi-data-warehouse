@@ -68,7 +68,7 @@ stg_calculator_fam AS (
     valor_credito_uvr_20_anios, valor_credito_uvr_30_anios, credito_maximo_segun_disponible_pesos,
     credito_maximo_segun_disponible_uvr, calificacion, koggi_profiling, indicador_ley_vivienda, ingresos, maximo_cuota_ley_vivienda,
     cuotas_titular, gastos_familiares
-  FROM ${ref("Calculator_table")}
+  FROM ${ref("src_calculator_fam")}
   QUALIFY ROW_NUMBER() OVER(PARTITION BY id_lead ORDER BY timestamp_registro DESC) = 1
 ),
 

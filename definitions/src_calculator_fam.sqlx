@@ -1,0 +1,9 @@
+config {
+  type: "view", 
+  schema: "BI",
+  name: "src_calculator_fam",
+  description: "Vista puente para leer la tabla conflictiva de Collections"
+}
+
+-- Aquí usamos la dirección física exacta porque no podemos usar declare()
+SELECT * FROM `davinci-onegroup-prod.firestore_collections.Calculator_table`
