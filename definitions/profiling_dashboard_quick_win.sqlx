@@ -167,7 +167,7 @@ quick_win_source_data AS (
     END AS unidades_vivienda
 
   FROM stg_profiling AS p
-  LEFT JOIN ${ref("stg_hdc_parsed_age")} AS age ON p.identification = age.identificacion
+  LEFT JOIN ${ref("stg_hdc_parsed_age_TEST")} AS age ON p.identification = age.identificacion
   LEFT JOIN stg_calculator AS c ON p.lead_id = c.id_lead
   LEFT JOIN stg_calculator_fam as cfam ON p.idFamilyGroup = cfam.idFamilyGroup
   LEFT JOIN grupos_usuarios AS usr ON p.createdEmail = usr.email AND p.Constructora = usr.entity_key
