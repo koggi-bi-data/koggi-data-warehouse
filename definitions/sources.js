@@ -56,3 +56,31 @@ declare({
   name: "stg_hdc_parsed_age",
   description: "Tabla auxiliar con edad calculada"
 });
+
+// 8. Base Leads Pro
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col",
+  name: "tbl_sq_leads"
+});
+
+// 9. Validación Score Profiling Pro
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col",
+  name: "tbl_sq_score_validity"
+});
+
+// 10. Tabla HDC Profiling Pro
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col",
+  name: "tbl_sq_hdc_validity"
+});
+
+// 11. Tabla Grupos Familiares
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col",
+  name: "tbl_sq_familiar_groups"
+});
