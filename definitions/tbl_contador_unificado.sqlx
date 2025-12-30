@@ -1,0 +1,152 @@
+config {
+    type: "table",
+    schema: "BI",
+    name: "tbl_contador_unificado_TEST",
+    description: "Tabla Unificada de Eventos. Fuente: Changelog + Leads. Incluye deduplicación técnica, limpieza de borrados y detección de huérfanos.",
+    bigquery: {
+        partitionBy: "fecha_evento",
+        clusterBy: ["constructora", "createdEmail"]
+    }
+}
+
+WITH 
+  -- 1. BASE DE USUARIOS
+  usuarios_unicos AS (
+    SELECT 
+      id, 
+      email, 
+      entity_key, 
+      name, 
+      id_group,
+      ROW_NUMBER() OVER(PARTITION BY email, entity_key ORDER BY id DESC) AS rn
+    FROM ${ref("tbl_user")} -- Asumiendo que estas tablas están declaradas en Dataform
+  ),
+
+  grupos_usuarios AS(
+    SELECT 
+      u.email, 
+      u.entity_key, 
+      u.name, 
+      upper(g.name) as tipo_usuario
+    FROM usuarios_unicos u
+    LEFT JOIN ${ref("tbl_groups")} g ON u.id_group = g.id
+    WHERE u.rn = 1
+  ),
+
+  -- 2. FUENTE LITE
+  leads_lite as (
+    SELECT
+      id as id_origen,
+      NULL as id_lead_pro,
+      DATE(TIMESTAMP(createdAt), "America/Bogota") as fecha_evento,
+      builderkey,
+      createdEmail,
+      preselectaStatus,
+      'LITE' as tipo_interaccion,
+      FALSE as es_followup_flag,
+      0 as contador_sq_snapshot
+    FROM ${ref("tbl_sq_leads_light")}
+  ),
+
+  -- 3. FUENTE PRO
+  leads_pro as (
+    SELECT
+      id as id_origen,
+      id as id_lead_pro,
+      DATE(TIMESTAMP(createdAt), "America/Bogota") as fecha_evento,
+      builderkey,
+      createdEmail,
+      preselectaStatus,
+      'PRO' as tipo_interaccion,
+      FALSE as es_followup_flag,
+      IFNULL(followUpCounter, 0) as contador_sq_snapshot
+    FROM ${ref("tbl_sq_leads")}
+  ),
+
+  -- 4. FUENTE CALCULATOR (Changelog)
+  raw_calc_base as (
+    SELECT
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.id_lead") AS INT64) as id_lead,
+      timestamp,
+      operation,
+      event_id,
+      document_id,
+      COALESCE(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.followUp") AS BOOL), FALSE) as es_followup,
+      JSON_EXTRACT_SCALAR(data, "$.constructora") as constructora_json,
+      JSON_EXTRACT_SCALAR(data, "$.followUp") as followup_str
+    FROM ${ref("Calculator_raw_changelog")}
+  ),
+
+  calc_deduped as (
+    SELECT * EXCEPT(rn) FROM (
+        SELECT *, ROW_NUMBER() OVER(PARTITION BY event_id ORDER BY timestamp DESC) as rn
+        FROM raw_calc_base
+    ) WHERE rn = 1
+  ),
+
+  calc_lifecycle as (
+    SELECT *,
+        FIRST_VALUE(operation) OVER(
+            PARTITION BY document_id 
+            ORDER BY timestamp DESC
+        ) as estado_final_documento
+    FROM calc_deduped
+  ),
+
+  calc_clean as (
+    SELECT * FROM calc_lifecycle
+    WHERE 
+      estado_final_documento != 'DELETE'
+      AND operation != 'DELETE'
+      AND followup_str = 'true' 
+      AND id_lead IS NOT NULL
+  ),
+
+  -- 5. DETECCIÓN DE HUÉRFANOS
+  followup_rows as (
+    SELECT
+      c.id_lead as id_origen,
+      l.id_lead_pro,
+      DATE(c.timestamp, "America/Bogota") as fecha_evento,
+      COALESCE(l.builderKey, c.constructora_json) as builderKey,
+      l.createdEmail,
+      l.preselectaStatus,
+      CASE 
+        WHEN l.id_lead_pro IS NOT NULL THEN 'FOLLOW UP' 
+        ELSE 'REGISTRO PERDIDO'
+      END as tipo_interaccion,
+      c.es_followup as es_followup_flag,
+      l.contador_sq_snapshot
+    FROM calc_clean c
+    LEFT JOIN leads_pro l ON c.id_lead = l.id_lead_pro
+  ),
+
+  -- 6. UNIÓN FINAL
+  total_eventos as (
+    SELECT * FROM leads_lite
+    UNION ALL
+    SELECT * FROM leads_pro
+    UNION ALL
+    SELECT * FROM followup_rows
+  )
+
+-- 7. SALIDA FINAL
+SELECT
+  e.fecha_evento,
+  e.builderkey as constructora,
+  e.createdemail,
+  e.preselectastatus,
+  e.tipo_interaccion,
+  e.es_followup_flag,
+  e.id_lead_pro,
+  e.contador_sq_snapshot,
+  IFNULL(usr.name, 'Usuario No Registrado') as nombre_usuario,
+  IFNULL(usr.tipo_usuario, 'Sin Grupo') as tipo_usuario,
+  CASE
+    WHEN e.createdEmail LIKE '%@koggi.co%' THEN 'Interno' 
+    ELSE 'Externo'
+  END as origen_usuario,
+  1 as cantidad_eventos
+FROM total_eventos e
+LEFT JOIN grupos_usuarios usr
+  ON e.createdEmail = usr.email AND e.builderKey = usr.entity_key

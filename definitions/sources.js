@@ -120,3 +120,19 @@ declare({
   name: "FamilyGroupCalculator",
   description: "Datos crudos JSON de la calculadora de grupos familiares"
 });
+
+// 16. Leads Lite
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col",
+  name: "tbl_sq_leads_light",
+  description: "Tabla de leads simplificados (Lite)"
+});
+
+// 17. Changelog de la Calculadora (Crudo para auditoría de cambios)
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "firestore_calculator",
+  name: "Calculator_raw_changelog",
+  description: "Histórico de cambios (logs) de la calculadora en Firestore"
+});
