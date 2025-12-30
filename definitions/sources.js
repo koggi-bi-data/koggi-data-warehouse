@@ -61,26 +61,62 @@ declare({
 declare({
   database: "davinci-onegroup-prod",
   schema: "central_col",
-  name: "tbl_sq_leads"
+  name: "tbl_sq_leads",
+  description: "Tabla principal de leads capturados en la plataforma Pro"
 });
 
 // 9. Validación Score Profiling Pro
 declare({
   database: "davinci-onegroup-prod",
   schema: "central_col",
-  name: "tbl_sq_score_validity"
+  name: "tbl_sq_score_validity",
+  description: "Registro de validaciones de score crediticio para perfilamiento"
 });
 
 // 10. Tabla HDC Profiling Pro
 declare({
   database: "davinci-onegroup-prod",
   schema: "central_col",
-  name: "tbl_sq_hdc_validity"
+  name: "tbl_sq_hdc_validity",
+  description: "Historias de crédito (HDC) validadas para el proceso de perfilamiento"
 });
 
 // 11. Tabla Grupos Familiares
 declare({
   database: "davinci-onegroup-prod",
   schema: "central_col",
-  name: "tbl_sq_familiar_groups"
+  name: "tbl_sq_familiar_groups",
+  description: "Relación de leads que conforman grupos familiares para solicitudes conjuntas"
+});
+
+// 12. Fuente de datos crudos de la calculadora
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "firestore_calculator",
+  name: "Calculator_raw_latest",
+  description: "Datos crudos (JSON) de la calculadora provenientes de Firestore"
+});
+
+// 13. Tabla de Motor de Política (MPK)
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col",
+  name: "tbl_sq_mpk",
+  description: "Resultados del motor de política de crédito"
+});
+
+// 14. Proyectos de Constructoras
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col",
+  name: "tbl_builder_projects",
+  description: "Metadata de proyectos de vivienda"
+});
+
+// 15. Fuente cruda de Calculadora Familiar
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "firestore_collections",
+  name: "FamilyGroupCalculator",
+  description: "Datos crudos JSON de la calculadora de grupos familiares"
 });
