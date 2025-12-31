@@ -7,7 +7,7 @@ config {
     bigquery: {
         partitionBy: "DATE_TRUNC(fecha_ejecucion, MONTH)",
         clusterBy: ["constructora", "estado"],
-        updatePartitionFilter: "fecha_ejecucion >= CURRENT_TIMESTAMP() - INTERVAL 7 DAY"
+        updatePartitionFilter: "DATE(fecha_ejecucion) >= CURRENT_DATE() - 7"
     }
 }
 
@@ -60,10 +60,9 @@ mpk_parsed AS (
       JSON_EXTRACT_SCALAR(response, '$.banco_constructor_nit') AS banco_constructor_nit,
       JSON_EXTRACT_SCALAR(response, '$.causales_banco_constructor') AS causales_banco_constructor,
       JSON_EXTRACT_SCALAR(response, '$.cumple_con_banco_constructor') AS cumple_con_banco_constructor,
-      JSON_EXTRACT_SCALAR(response, '$.causal_no_cumplimiento') AS causal_no_cumplimiento_cruda,
-      response -- Mantenido para lógica interna
+      JSON_EXTRACT_SCALAR(response, '$.causal_no_cumplimiento') AS causal_no_cumplimiento_cruda
     FROM ${ref("tbl_sq_mpk")}
-    ${when(incremental(), `WHERE FechaCambio >= CURRENT_TIMESTAMP() - INTERVAL 7 DAY`)}
+    ${when(incremental(), `WHERE FechaCambio >= CURRENT_DATE() - 7`)}
 ),
 
 BaseCausalUnificada AS (
@@ -74,18 +73,15 @@ BaseCausalUnificada AS (
       prof.email, prof.phone, prof.id, prof.rol, prof.qualification,
       lboard.uid_entity,
       dataprojects.delivery_at,
-      
       UPPER(CASE
           WHEN mpk.causales_banco_constructor IS NOT NULL AND TRIM(mpk.causales_banco_constructor) != '' AND UPPER(TRIM(mpk.causales_banco_constructor)) NOT IN ('SIN BANCO CONSTRUCTOR', 'CUMPLE', 'VIABLE') THEN TRIM(mpk.causales_banco_constructor)
           WHEN mpk.causal_no_cumplimiento_cruda IS NOT NULL AND TRIM(mpk.causal_no_cumplimiento_cruda) != '' THEN TRIM(mpk.causal_no_cumplimiento_cruda)
           ELSE 'SIN CAUSAL'
       END) AS causal_unificada_cruda,
-
       CASE
           WHEN mpk.cumple_con_banco_constructor IN ('VIABLE', 'VIABLE EN ANÁLISIS') THEN mpk.cumple_con_banco_constructor
           ELSE 'NO VIABLE'
-      END AS resumen_viabilidad_banco_calculado,
-
+      END AS resumen_viabilidad_banco_tmp,
       ( (CASE WHEN estado = 'EXITOSO' AND aplica_bbva = 'APLICA' THEN 1 ELSE 0 END) +
         (CASE WHEN estado = 'EXITOSO' AND aplica_itau = 'APLICA' THEN 1 ELSE 0 END) +
         (CASE WHEN estado = 'EXITOSO' AND aplica_bancolombia = 'APLICA' THEN 1 ELSE 0 END) +
@@ -93,14 +89,12 @@ BaseCausalUnificada AS (
         (CASE WHEN estado = 'EXITOSO' AND aplica_caja_social = 'APLICA' THEN 1 ELSE 0 END) +
         (CASE WHEN estado = 'EXITOSO' AND aplica_banco_bogota = 'APLICA' THEN 1 ELSE 0 END) +
         (CASE WHEN estado = 'EXITOSO' AND aplica_credifamilia = 'APLICA' THEN 1 ELSE 0 END)
-      ) AS total_bancos_aplica_calculado,
-
+      ) AS total_bancos_aplica_tmp,
       CASE
         WHEN prof.rol = 'TITULAR' AND mpk.idfamilygroup != '' THEN 'Grupo Familiar'
         WHEN (mpk.idFamilyGroup IS NULL OR mpk.idFamilyGroup = '') AND prof.rol = 'TITULAR' AND fam.principalIdLead IS NULL THEN 'Único Comprador'
         ELSE NULL
-      END AS validacion_unidades_vivienda_calculada
-
+      END AS validacion_unidades_vivienda_tmp
     FROM mpk_parsed AS mpk
     LEFT JOIN CalculatorData AS calc ON mpk.id_calculadora = calc.document_id
     LEFT JOIN ${ref("tbl_profiling")} AS prof ON prof.id = calc.id_lead
@@ -111,7 +105,6 @@ BaseCausalUnificada AS (
 )
 
 SELECT
-  -- 1. Campos base de MPK
   fecha_ejecucion,
   id_calculadora,
   id_mpk,
@@ -141,8 +134,6 @@ SELECT
   banco_constructor_nit,
   causales_banco_constructor,
   cumple_con_banco_constructor,
-
-  -- 2. Campos de Calculadora
   proyecto,
   constructora,
   nombre,
@@ -151,8 +142,6 @@ SELECT
   tipo_vivienda,
   valor_credito,
   valor_inmueble,
-
-  -- 3. Campos de Profiling / Entidades
   email,
   phone,
   id,
@@ -160,13 +149,9 @@ SELECT
   qualification,
   uid_entity,
   delivery_at,
-
-  -- 4. Campos Calculados (respetando nombres originales)
-  resumen_viabilidad_banco_calculado AS resumen_viabilidad_banco,
-  total_bancos_aplica_calculado AS total_bancos_aplica,
-  validacion_unidades_vivienda_calculada AS validacion_unidades_vivienda,
-
-  -- 5. Lógica de normalización de causales
+  resumen_viabilidad_banco_tmp AS resumen_viabilidad_banco,
+  total_bancos_aplica_tmp AS total_bancos_aplica,
+  validacion_unidades_vivienda_tmp AS validacion_unidades_vivienda,
   CASE
     WHEN TRIM(causal_no_cumplimiento_cruda) IS NULL OR TRIM(causal_no_cumplimiento_cruda) = '' THEN 'SCORE MENOR AL REQUERIDO'
     WHEN causal_no_cumplimiento_cruda IN ('CAPACIDAD', 'CAPACIDAD DE ENDEUDAMIENTO', 'EXCEDE LÍMITE DE CRÉDITO') THEN 'CAPACIDAD DE PAGO'
@@ -175,7 +160,6 @@ SELECT
     WHEN causal_no_cumplimiento_cruda IN ('SCORE', 'SCORE MENOR AL REQUERIDO') THEN 'SCORE MENOR AL REQUERIDO'
     ELSE UPPER(causal_no_cumplimiento_cruda)
   END AS causal_no_cumplimiento,
-
   CASE
     WHEN causal_unificada_cruda IN ('CAPACIDAD', 'CAPACIDAD DE ENDEUDAMIENTO', 'EXCEDE LÍMITE DE CRÉDITO') THEN 'CAPACIDAD DE PAGO'
     WHEN causal_unificada_cruda IN ('ENDEUDAMENTO', 'ENDEUDAMIENTO') THEN 'NIVEL DE ENDEUDAMIENTO'
@@ -183,6 +167,5 @@ SELECT
     WHEN causal_unificada_cruda IN ('SCORE', 'SCORE MENOR AL REQUERIDO','SIN CAUSAL') THEN 'SCORE MENOR AL REQUERIDO'
     ELSE causal_unificada_cruda
   END AS causales_banco_constructor_normalizado
-
 FROM BaseCausalUnificada
 QUALIFY ROW_NUMBER() OVER(PARTITION BY id_mpk ORDER BY FechaCambio DESC) = 1
