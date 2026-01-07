@@ -2,12 +2,12 @@
 // Esto conecta Dataform con las tablas existentes en Bigquery
 
 // 1. Base de Leads y Perfilamiento
-declare({
-    database: "davinci-onegroup-prod",
-    schema: "BI",
-    name: "tbl_profiling",
-    description: "Tabla de base de leads y perfilamiento construida anteriormente por BI"
-});
+// declare({
+//     database: "davinci-onegroup-prod",
+//     schema: "BI",
+//     name: "tbl_profiling",
+//     description: "Tabla de base de leads y perfilamiento construida anteriormente por BI"
+// });
 
 // 2. Calculadora (Simulaciones)
 declare({

@@ -45,7 +45,7 @@ stg_profiling AS (
     CUOTAS_TITULAR,
     housingLawIndicator,
     idFamilyGroup
-  FROM ${ref("tbl_profiling")}
+  FROM ${ref("tbl_profiling_TEST")}
 ),
 
 -- 2. Staging de la Calculadora Individual

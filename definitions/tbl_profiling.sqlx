@@ -1,0 +1,152 @@
+config {
+    type: "table",
+    database: "davinci-onegroup-prod",
+    schema: "BI",
+    name: "tbl_profiling_TEST",
+    description: "Tabla maestra de perfilamiento. Incluye cálculo de endeudamiento, roles (Titular/Codeudor) y conteo de causales de rechazo.",
+    bigquery: {
+        labels: {
+            "proyecto": "davinci",
+            "capa": "bi",
+            "frecuencia": "diaria"
+        }
+    }
+}
+
+WITH profiling_base AS (
+    SELECT
+        leads.*,
+        score_validity.score_date,
+        score_validity.score_date_end,
+        score_validity.original_response,
+        score_validity.scoring,
+
+        -- 1. Extracción de fecha de expedición
+        JSON_EXTRACT_SCALAR(
+            JSON_EXTRACT(hdc_validity.original_response, '$.NaturalNacional.Identificacion.attributes.fechaExpedicion'),
+            '$'
+        ) AS fecha_expedicion,
+
+        -- 2. Datos de la calculadora
+        calc.valor_credito_pesos_20_anios,
+        calc.valor_credito_uvr_20_anios,
+        calc.valor_credito_uvr_30_anios,
+        calc.document_id,
+        calc.prestamo_maximo_tasa_mediana_15_anios,
+        calc.prestamo_maximo_tasa_baja_15_anios,
+        calc.prestamo_maximo_tasa_baja_20_anios,
+        calc.prestamo_maximo_tasa_mediana_30_anios,
+        calc.prestamo_maximo_tasa_baja_30_anios,
+
+        -- 3. Evaluación de actividad económica
+        CASE
+            WHEN JSON_EXTRACT_SCALAR(score_validity.original_response, '$.summary.OCUPACION') = '1' THEN 'EMPLEADO'
+            WHEN JSON_EXTRACT_SCALAR(score_validity.original_response, '$.summary.OCUPACION') = '2' THEN 'INDEPENDIENTE'
+            WHEN JSON_EXTRACT_SCALAR(score_validity.original_response, '$.summary.OCUPACION') = '3' THEN 'PENSIONADO'
+            ELSE 'SIN ACTIVIDAD ECONOMICA'
+        END AS ACTIVIDAD_ECONOMICA,
+
+        -- 4. Lógica de Roles (Titular vs Codeudor)
+        CASE
+            WHEN leads.idFamilyGroup IS NULL OR leads.idFamilyGroup = 0 THEN 'TITULAR'
+            WHEN fam_group.id IS NOT NULL AND fam_group.principalIdLead = leads.id THEN 'TITULAR'
+            WHEN fam_group.id IS NOT NULL THEN 'CODEUDOR'
+            ELSE 'TITULAR'
+        END AS Rol,
+
+        -- 5. Agrupación de Score
+        CASE
+            WHEN scoring = 0 THEN 'Cliente sin vida crediticia'
+            WHEN scoring BETWEEN 1 AND 140 THEN '1-140'
+            WHEN scoring BETWEEN 141 AND 280 THEN '141-280'
+            WHEN scoring BETWEEN 281 AND 420 THEN '281-420'
+            WHEN scoring BETWEEN 421 AND 560 THEN '421-560'
+            WHEN scoring BETWEEN 561 AND 700 THEN '561-700'
+            WHEN scoring BETWEEN 701 AND 840 THEN '701-840'
+            WHEN scoring BETWEEN 841 AND 980 THEN '841-980'
+            WHEN scoring > 980 THEN 'Más de 980'
+            ELSE 'Sin información'
+        END AS score_agrupado,
+
+        -- 6. Valores Financieros
+        SAFE_CAST(JSON_EXTRACT_SCALAR(score_validity.original_response, '$.summary.VALOR_INGRESO_FINAL') AS FLOAT64) AS VALOR_INGRESO_FINAL,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(score_validity.original_response, '$.summary.CUOTAS_TITULAR') AS FLOAT64) AS CUOTAS_TITULAR,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(score_validity.original_response, '$.summary.VALOR_INGRESO_2') AS FLOAT64) AS VALOR_INGRESO_2,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(score_validity.original_response, '$.summary.INGRESO_FINAL') AS FLOAT64) AS INGRESO_FINAL,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(score_validity.original_response, '$.summary.QUANTO3_MEDIO') AS FLOAT64) AS QUANTO3,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(score_validity.original_response, '$.summary.INGRESOS_TOTALES_ULTIMO_MES') AS FLOAT64) AS INGRESOS_TOTALES_ULTIMO_MES,
+
+        -- 7. Cálculo de ENDEUDAMIENTO
+        SAFE_CAST(JSON_EXTRACT_SCALAR(score_validity.original_response, '$.summary.CUOTAS_TITULAR') AS FLOAT64) /
+        NULLIF(SAFE_CAST(JSON_EXTRACT_SCALAR(score_validity.original_response, '$.summary.INGRESO_FINAL') AS FLOAT64), 0) AS ENDEUDAMIENTO,
+
+        -- 8. Pivoteo de Causales (CAUSAL_1 a CAUSAL_19)
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_1')  AS CAUSAL_1,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_2')  AS CAUSAL_2,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_3')  AS CAUSAL_3,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_4')  AS CAUSAL_4,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_5')  AS CAUSAL_5,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_6')  AS CAUSAL_6,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_7')  AS CAUSAL_7,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_8')  AS CAUSAL_8,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_9')  AS CAUSAL_9,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_10') AS CAUSAL_10,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_11') AS CAUSAL_11,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_12') AS CAUSAL_12,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_13') AS CAUSAL_13,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_14') AS CAUSAL_14,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_15') AS CAUSAL_15,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_16') AS CAUSAL_16,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_17') AS CAUSAL_17,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_18') AS CAUSAL_18,
+        JSON_EXTRACT_SCALAR(score_validity.causales, '$.CAUSAL_19') AS CAUSAL_19
+
+    FROM
+        ${ref("tbl_sq_leads")} AS leads
+    LEFT JOIN
+        ${ref("tbl_sq_score_validity")} AS score_validity
+    ON
+        leads.idScoreValidity = score_validity.id
+    LEFT JOIN
+        ${ref("tbl_sq_hdc_validity")} AS hdc_validity
+    ON
+        leads.idHdc = hdc_validity.id_hdc
+    LEFT JOIN (
+        -- Seleccionamos solo el cálculo más reciente por lead
+        SELECT * FROM ${ref("Calculator_table")}
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY id_lead ORDER BY timestamp DESC) = 1
+    ) AS calc
+    ON
+        leads.id = calc.id_lead
+    LEFT JOIN
+        ${ref("tbl_sq_familiar_groups")} AS fam_group
+    ON
+        leads.idFamilyGroup = fam_group.id
+)
+
+SELECT
+    *,
+    -- 9. Conteo total de causales presentes
+    (
+        COALESCE(IF(CAUSAL_1 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_2 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_3 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_4 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_5 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_6 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_7 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_8 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_9 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_10 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_11 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_12 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_13 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_14 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_15 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_16 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_17 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_18 IS NOT NULL, 1, 0), 0) +
+        COALESCE(IF(CAUSAL_19 IS NOT NULL, 1, 0), 0)
+    ) AS total_causales
+FROM
+    profiling_base
