@@ -2,58 +2,41 @@ config {
     type: "incremental",
     schema: "BI",
     name: "stg_hdc_parsed_age_TEST",
-    tags: ["staging", "diario"],
     uniqueKey: ["identificacion"],
-    description: "Tabla incremental que extrae y promedia la edad desde la respuesta original de HDC.",
-    bigquery: {
-        partitionBy: "DATE(hdc_date)",
-        updatePartitionFilter: "hdc_date >= CURRENT_DATE() - 3"
-    }
+    description: "Tabla incremental de edad. Espejo de la original con 4 columnas."
 }
 
 WITH RankedHdc AS (
   SELECT
     user_identification_number AS identificacion,
     original_response,
-    hdc_date,
+    -- Se usa fecha solo para obtener el registro más reciente
     ROW_NUMBER() OVER(PARTITION BY user_identification_number ORDER BY hdc_date DESC) as rn
   FROM
     ${ref("tbl_sq_hdc_validity")}
   WHERE
     user_identification_number IS NOT NULL
-    -- Filtro incremental para procesar solo datos recientes y optimizar costos
+    -- Filtro incremental opcional para eficiencia
     ${when(incremental(), `AND hdc_date >= CURRENT_DATE() - 3`)}
-),
-
-ExtractedData AS (
-  SELECT 
-    identificacion,
-    hdc_date,
-    -- Extracción MIN
-    COALESCE(
-        SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.min') AS INT64),
-        SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.attributes.min') AS INT64)
-    ) AS edad_min,
-    -- Extracción MAX
-    COALESCE(
-        SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.max') AS INT64),
-        SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.attributes.max') AS INT64)
-    ) AS edad_max
-  FROM RankedHdc
-  WHERE rn = 1
 )
 
 SELECT
   identificacion,
-  hdc_date,
-  edad_min, 
-  edad_max, 
-  CASE 
-    WHEN edad_min IS NOT NULL AND edad_max IS NOT NULL THEN (edad_min + edad_max) / 2
-    WHEN edad_min IS NOT NULL THEN edad_min
-    WHEN edad_max IS NOT NULL THEN edad_max
-    ELSE NULL 
-  END AS edad_promedio,
-  CURRENT_DATETIME('America/Bogota') AS fecha_ultima_actualizacion_bi
-FROM
-  ExtractedData
+  COALESCE(
+      SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.min') AS INT64),
+      SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.attributes.min') AS INT64)
+  ) AS edad_min,
+  COALESCE(
+      SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.max') AS INT64),
+      SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.attributes.max') AS INT64)
+  ) AS edad_max,
+  -- Cálculo de promedio sin columnas adicionales de auditoría
+  (COALESCE(
+      SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.min') AS INT64),
+      SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.attributes.min') AS INT64)
+  ) + COALESCE(
+      SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.max') AS INT64),
+      SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.attributes.max') AS INT64)
+  )) / 2 AS edad_promedio
+FROM RankedHdc
+WHERE rn = 1
