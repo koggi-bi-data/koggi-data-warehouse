@@ -10,13 +10,12 @@ WITH RankedHdc AS (
   SELECT
     user_identification_number AS identificacion,
     original_response,
-    -- Se usa fecha solo para obtener el registro más reciente
+    hdc_date,
     ROW_NUMBER() OVER(PARTITION BY user_identification_number ORDER BY hdc_date DESC) as rn
   FROM
     ${ref("tbl_sq_hdc_validity")}
   WHERE
     user_identification_number IS NOT NULL
-    -- Filtro incremental opcional para eficiencia
     ${when(incremental(), `AND hdc_date >= CURRENT_DATE() - 3`)}
 )
 
@@ -30,7 +29,6 @@ SELECT
       SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.max') AS INT64),
       SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.attributes.max') AS INT64)
   ) AS edad_max,
-  -- Cálculo de promedio sin columnas adicionales de auditoría
   (COALESCE(
       SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.min') AS INT64),
       SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.attributes.min') AS INT64)
