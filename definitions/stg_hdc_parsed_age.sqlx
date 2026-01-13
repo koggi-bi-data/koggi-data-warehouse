@@ -10,7 +10,7 @@ WITH RankedHdc AS (
   SELECT
     user_identification_number AS identificacion,
     original_response,
-    hdc_date,
+    hdc_date, 
     ROW_NUMBER() OVER(PARTITION BY user_identification_number ORDER BY hdc_date DESC) as rn
   FROM
     ${ref("tbl_sq_hdc_validity")}
