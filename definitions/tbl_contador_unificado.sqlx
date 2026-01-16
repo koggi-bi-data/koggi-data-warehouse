@@ -2,6 +2,7 @@ config {
     type: "table",
     schema: "BI",
     name: "tbl_contador_unificado_TEST",
+    tags: ["diario"],
     description: "Tabla Unificada de Eventos. Fuente: Changelog + Leads. Incluye deduplicación técnica, limpieza de borrados y detección de huérfanos.",
     bigquery: {
         partitionBy: "fecha_evento",
