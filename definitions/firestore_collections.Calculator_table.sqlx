@@ -2,6 +2,7 @@ config {
     type: "incremental",
     schema: "firestore_collections",
     name: "Calculator_table_TEST",
+    tags: ["diario"],
     uniqueKey: ["document_id"],
     description: "Tabla de calculadora para Grupos Familiares (incremental).",
     bigquery: {

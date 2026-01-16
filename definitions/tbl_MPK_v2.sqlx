@@ -2,6 +2,7 @@ config {
     type: "incremental",
     schema: "BI",
     name: "tbl_MPK_v2_TEST",
+    tags: ["diario"],
     uniqueKey: ["id_mpk"],
     description: "Tabla unificada de Motor de Política de Crédito (MPK). Espejo de la tabla original.",
     bigquery: {

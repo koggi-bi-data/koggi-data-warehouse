@@ -2,6 +2,7 @@ config {
     type: "incremental",
     schema: "firestore_calculator",
     name: "Calculator_table_TEST",
+    tags: ["diario"],
     uniqueKey: ["document_id"],
     description: "Tabla Calculadora Maestra V5.1. Actualiza simulaciones existentes e inserta nuevas.",
     bigquery: {
