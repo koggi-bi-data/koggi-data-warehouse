@@ -38,6 +38,7 @@ WITH
   )
 
 SELECT
+  timestamp_registro_calculado AS timestamp_registro,
   document_id,
   timestamp,
   TRIM(LOWER(CONCAT(CAST(identificacion AS STRING), SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.constructora") AS STRING)))) AS id_unico,
@@ -77,7 +78,6 @@ SELECT
   SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.cuota_pesos[3].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS prestamo_maximo_tasa_baja_20_anios,
   SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.cuota_pesos[4].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64) AS prestamo_maximo_tasa_mediana_30_anios,
   SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.cuota_pesos[5].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS prestamo_maximo_tasa_baja_30_anios,
-  timestamp_registro_calculado AS timestamp_registro,
   ROW_NUMBER() OVER (PARTITION BY id_lead ORDER BY timestamp_registro_calculado ASC) AS rn,
   DATE(timestamp_registro_calculado) AS fecha_registro,
   FORMAT_TIMESTAMP("%Y-%m", timestamp_registro_calculado) AS mes_registro,
