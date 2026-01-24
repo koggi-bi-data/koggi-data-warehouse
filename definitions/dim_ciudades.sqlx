@@ -1,0 +1,19 @@
+config {
+    type: "table",
+    schema: "BI",
+    name: "dim_ciudades",
+    description: "Tabla de dimensiones de ciudades creada usando la función central de utils"
+}
+
+WITH raw_cities AS (
+  SELECT DISTINCT 
+    projectCity 
+  FROM 
+    ${ref("tbl_sq_leads")}
+)
+
+SELECT 
+  projectCity,
+  ${utils.cleanCity("projectCity")} AS projectCity_clean
+FROM 
+  raw_cities
