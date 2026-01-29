@@ -136,3 +136,11 @@ declare({
   name: "Calculator_raw_changelog",
   description: "Histórico de cambios (logs) de la calculadora en Firestore"
 });
+
+// 18. Fuente cruda de Calculadora Lite
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "firestore_collections",
+  name: "Calculator_light",
+  description: "Datos crudos JSON de la calculadora Lite provenientes de Firestore"
+});
