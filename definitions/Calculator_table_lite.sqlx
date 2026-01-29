@@ -3,12 +3,11 @@ config {
     schema: "firestore_collections",
     name: "calculator_table_lite_TEST",
     uniqueKey: ["document_id"],
-    description: "Tabla Maestra Profiling Lite. Simulaciones rápidas, tasas extraídas y causales aplanadas.",
+    description: "Tabla Maestra Profiling Lite. Simulaciones rápidas y causales aplanadas.",
     bigquery: {
         partitionBy: "DATE(timestamp_registro)",
         clusterBy: ["identificacion", "constructora"],
-        // Optimizamos el escaneo de particiones al actualizar
-        updatePartitionFilter: "timestamp_registro >= CURRENT_DATETIME() - INTERVAL 7 DAY"
+        updatePartitionFilter: "DATE(timestamp_registro) >= CURRENT_DATE() - INTERVAL 3 DAY"
     },
     tags: ["diario", "profiling", "lite"]
 }
@@ -18,17 +17,15 @@ WITH
     SELECT
       document_id,
       DATETIME(created_at, "America/Bogota") AS timestamp_registro,
-      DATETIME(updated_at, "America/Bogota") AS timestamp_actualizacion,
       SAFE_CAST(data AS STRING) AS data_json_string
     FROM
-      -- Ajusta esto: ${ref("Calculator_light")} si está en el mismo proyecto/dataset definido en dataform.json
       ${ref("Calculator_light")}
     
     ${when(incremental(), `
       WHERE 
-        created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 3 DAY)
+        DATE(created_at) >= CURRENT_DATE() - INTERVAL 3 DAY
         OR 
-        updated_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 3 DAY)
+        DATE(updated_at) >= CURRENT_DATE() - INTERVAL 3 DAY
     `)}
   ),
 
@@ -36,82 +33,57 @@ WITH
     SELECT
       document_id,
       timestamp_registro,
-      timestamp_actualizacion,
-      data_json_string,
-      
-      -- 1. IDENTIFICADORES
       SAFE_CAST(JSON_EXTRACT_SCALAR(data_json_string, '$.id_lead') AS INT64) AS id_lead,
       JSON_EXTRACT_SCALAR(data_json_string, '$.identificacion') AS identificacion_raw,
       JSON_EXTRACT_SCALAR(data_json_string, '$.constructora') AS constructora_raw,
       JSON_EXTRACT_SCALAR(data_json_string, '$.proyecto') AS proyecto_raw,
       JSON_EXTRACT_SCALAR(data_json_string, '$.ciudad') AS ciudad_raw,
       JSON_EXTRACT_SCALAR(data_json_string, '$.causales') AS causales_nested_json,
-      
-      -- 2. PERFILAMIENTO
       SAFE_CAST(JSON_EXTRACT_SCALAR(data_json_string, '$.ingresos') AS INT64) AS ingresos,
       SAFE_CAST(JSON_EXTRACT_SCALAR(data_json_string, '$.score') AS INT64) AS score,
       JSON_EXTRACT_SCALAR(data_json_string, '$.calificacion') AS calificacion,
       JSON_EXTRACT_SCALAR(data_json_string, '$.indicador_ley_vivienda') AS indicador_ley_vivienda,
       JSON_EXTRACT_SCALAR(data_json_string, '$.endeudamiento_financiero') AS endeudamiento_financiero,
-      
-      -- 3. TASAS
       SAFE_CAST(JSON_EXTRACT_SCALAR(data_json_string, '$.cuota_pesos[0].tasa_mediana.tasa') AS FLOAT64) AS tasa_pesos_15_mediana,
       SAFE_CAST(JSON_EXTRACT_SCALAR(data_json_string, '$.cuota_uvr[2].tasa_mediana.tasa') AS FLOAT64) AS tasa_uvr_20_mediana,
-      
-      -- 4. CAPACIDAD Y CUPO
       SAFE_CAST(JSON_EXTRACT_SCALAR(data_json_string, '$.cuotas_titular') AS INT64) AS cuotas_titular,
-      SAFE_CAST(JSON_EXTRACT_SCALAR(data_json_string, '$.cuota_pesos[0].tasa_mediana.relacion_cuota_ingresos') AS FLOAT64) AS relacion_cuota_ingreso,
       SAFE_CAST(JSON_EXTRACT_SCALAR(data_json_string, '$.relacion_cuota_ingreso_preselecta') AS FLOAT64) AS relacion_cuota_ingreso_preselecta,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data_json_string, '$.cuota_pesos[0].tasa_mediana.relacion_cuota_ingresos') AS FLOAT64) AS relacion_cuota_ingreso,
       SAFE_CAST(JSON_EXTRACT_SCALAR(data_json_string, '$.credito_maximo_segun_disponible_pesos') AS INT64) AS credito_maximo_segun_disponible_pesos,
       SAFE_CAST(JSON_EXTRACT_SCALAR(data_json_string, '$.credito_maximo_segun_disponible_uvr') AS INT64) AS credito_maximo_segun_disponible_uvr
     FROM
       raw_source
-  ),
-
-  final_logic AS (
-    SELECT
-      document_id,
-      timestamp_registro,
-      timestamp_actualizacion,
-      id_lead,
-      
-      TRIM(LOWER(CONCAT(
-        COALESCE(identificacion_raw, '0'),
-        COALESCE(constructora_raw, 'sin_constructora')
-      ))) AS id_unico,
-      
-      SAFE_CAST(identificacion_raw AS INT64) AS identificacion,
-      TRIM(LOWER(constructora_raw)) AS constructora,
-      TRIM(LOWER(proyecto_raw)) AS proyecto,
-      
-      CASE
-        WHEN LOWER(TRIM(ciudad_raw)) = 'bogotá, d.c.' THEN 'BOGOTA'
-        WHEN ciudad_raw IS NULL OR ciudad_raw = '' THEN 'SIN INFORMACION'
-        ELSE UPPER(TRIM(REGEXP_REPLACE(NORMALIZE(ciudad_raw, NFD), r'\pM', '')))
-      END AS ciudad_estandarizada,
-
-      ingresos,
-      score,
-      calificacion,
-      indicador_ley_vivienda,
-      endeudamiento_financiero,
-      tasa_pesos_15_mediana,
-      tasa_uvr_20_mediana,
-      cuotas_titular,
-      relacion_cuota_ingreso_preselecta,
-      relacion_cuota_ingreso,
-      credito_maximo_segun_disponible_pesos,
-      credito_maximo_segun_disponible_uvr,
-      
-      (
-        SELECT STRING_AGG(DISTINCT UPPER(value), ' | ')
-        FROM UNNEST(REGEXP_EXTRACT_ALL(causales_nested_json, r':"([^"]+)"')) AS value
-      ) AS motivos_rechazo_concatenados,
-      
-      'PROFILING_LITE' AS origen_dato,
-      CURRENT_TIMESTAMP() AS fecha_actualizacion
-    FROM
-      parsed_layer
   )
 
-SELECT * FROM final_logic
+SELECT
+  document_id,
+  timestamp_registro,
+  id_lead,
+  TRIM(LOWER(CONCAT(COALESCE(identificacion_raw, '0'), COALESCE(constructora_raw, 'sin_constructora')))) AS id_unico,
+  SAFE_CAST(identificacion_raw AS INT64) AS identificacion,
+  TRIM(LOWER(constructora_raw)) AS constructora,
+  TRIM(LOWER(proyecto_raw)) AS proyecto,
+  ingresos,
+  score,
+  calificacion,
+  indicador_ley_vivienda,
+  endeudamiento_financiero,
+  tasa_pesos_15_mediana,
+  tasa_uvr_20_mediana,
+  cuotas_titular,
+  relacion_cuota_ingreso_preselecta,
+  relacion_cuota_ingreso,
+  credito_maximo_segun_disponible_pesos,
+  credito_maximo_segun_disponible_uvr,
+  CASE
+    WHEN LOWER(TRIM(ciudad_raw)) = 'bogotá, d.c.' THEN 'BOGOTA'
+    WHEN ciudad_raw IS NULL OR ciudad_raw = '' THEN 'SIN INFORMACION'
+    ELSE UPPER(TRIM(REGEXP_REPLACE(NORMALIZE(ciudad_raw, NFD), r'\pM', '')))
+  END AS ciudad_estandarizada,
+  (
+    SELECT STRING_AGG(DISTINCT UPPER(value), ' | ')
+    FROM UNNEST(REGEXP_EXTRACT_ALL(causales_nested_json, r':"([^"]+)"')) AS value
+  ) AS motivos_rechazo_concatenados,
+  CURRENT_TIMESTAMP() AS fecha_actualizacion
+FROM
+  parsed_layer
