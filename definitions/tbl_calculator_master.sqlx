@@ -2,6 +2,7 @@ config {
     type: "incremental",
     schema: "BI",
     name: "tbl_calculator_master",
+    tags: ["diario"],
     uniqueKey: ["event_id"],
     description: "Tabla Silver Maestra (SCD Tipo 2): Almacena el historial completo de calculadora.",
     bigquery: {
