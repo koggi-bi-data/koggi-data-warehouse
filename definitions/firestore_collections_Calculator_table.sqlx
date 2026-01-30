@@ -77,7 +77,7 @@ SELECT
   SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.cuota_pesos[1].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS prestamo_maximo_tasa_baja_15_anios,
   SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.cuota_pesos[3].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS prestamo_maximo_tasa_baja_20_anios,
   SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.cuota_pesos[4].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64) AS prestamo_maximo_tasa_mediana_30_anios,
-  SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.cuota_pesos[5].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS prestamo_maximo_tasa_baja_30_anios
+  SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.cuota_pesos[5].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS prestamo_maximo_tasa_baja_30_anios,
   DATE(timestamp_registro_calculado) AS fecha_registro,
   FORMAT_TIMESTAMP("%Y-%m", timestamp_registro_calculado) AS mes_registro,
   CASE
