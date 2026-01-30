@@ -1,0 +1,120 @@
+config {
+    type: "incremental",
+    schema: "BI",
+    name: "tbl_calculator_master",
+    uniqueKey: ["event_id"],
+    description: "Tabla Silver Maestra (SCD Tipo 2): Almacena el historial completo de calculadora.",
+    bigquery: {
+        partitionBy: "DATE(timestamp_registro_calculado)",
+        clusterBy: ["identificacion", "id_lead", "constructora"]
+    }
+}
+
+WITH
+-- 1. Captura de eventos nuevos
+    raw_base as (
+        select
+            event_id,
+            document_id,
+            timestamp,
+            operation,
+            data,
+            safe_cast(json_extract_scalar(data, "$.id_lead") as INT64) as id_lead_check
+        from ${ref("Calculator_raw_changelog")}
+        ${when(incremental(), `WHERE timestamp > (SELECT MAX(timestamp) FROM ${self()})`)}
+    ),
+
+-- 2. Deduplicación Técnica
+    deduplicated as (
+        select * except(rn_tech) from (
+            select *, row_number() over(partition By event_id order by timestamp desc) as rn_tech
+            from raw_base
+        ) where rn_tech = 1
+    ),
+
+-- 3. Determinación de Estado Final del Documento
+    lifecycle as (
+        select *,
+            first_value(operation) over(partition By document_id order by timestamp desc) as operacion_final
+        from deduplicated
+    ), 
+
+-- 4. Filtrado de Negocio
+  clean_source AS (
+    SELECT * FROM lifecycle
+    WHERE operation != 'DELETE' AND id_lead_check IS NOT NULL
+  ),
+
+  -- 5. Extracción Masiva (Flattening)
+  Staging_Flattened AS (
+    SELECT
+      event_id,
+      document_id,
+      timestamp,
+      CASE WHEN operacion_final = 'DELETE' THEN 'ELIMINADO' ELSE 'ACTIVO' END as estado_ciclo_vida,
+      COALESCE(
+        DATETIME(CAST(PARSE_DATETIME('%s', JSON_EXTRACT_SCALAR(data, "$.fecha_registro._seconds")) AS TIMESTAMP), "America/Bogota"), 
+        DATETIME(TIMESTAMP(timestamp), "America/Bogota")
+      ) AS timestamp_registro_calculado,
+      
+      id_lead_check AS id_lead,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.identificacion") AS INT64) AS identificacion,
+      TRIM(LOWER(JSON_EXTRACT_SCALAR(data, "$.proyecto"))) AS proyecto,
+      TRIM(LOWER(JSON_EXTRACT_SCALAR(data, "$.constructora"))) AS constructora,
+      JSON_EXTRACT_SCALAR(data, "$.ciudad") AS ciudad, 
+      JSON_EXTRACT_SCALAR(data, "$.nombre") AS nombre,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.idFamilyGroup") AS INT64) AS idFamilyGroup,
+      JSON_EXTRACT_SCALAR(data, "$.projectBankNIT") AS projectBankNIT,
+
+      -- Variables Financieras
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.ingresos") AS INT64) AS ingresos,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.score") AS INT64) AS score,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.valor_credito") AS INT64) AS valor_credito,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas_titular") AS INT64) AS cuotas_titular,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.valor_inmueble") AS INT64) AS valor_inmueble,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.personas_cargo") AS INT64) AS personas_cargo,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.gastos_familiares") AS INT64) AS gastos_familiares,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.diferencia_credito_maximo") AS INT64) AS diferencia_credito_maximo,
+      
+      -- Textos de Negocio
+      JSON_EXTRACT_SCALAR(data, "$.calificacion") AS calificacion,
+      JSON_EXTRACT_SCALAR(data, "$.koggi_profiling") AS koggi_profiling,
+      JSON_EXTRACT_SCALAR(data, "$.tipo_vivienda") AS tipo_vivienda,
+      JSON_EXTRACT_SCALAR(data, "$.indicador_ley_vivienda") AS indicador_ley_vivienda,
+      JSON_EXTRACT_SCALAR(data, "$.indicador_causales") AS indicador_causales,
+      
+      -- Coberturas y Topes
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.maximo_cuota_ley_vivienda") AS INT64) AS maximo_cuota_ley_vivienda,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.disponible_cuota_segun_ingresos") AS INT64) AS disponible_cuota_segun_ingresos,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.credito_maximo_segun_disponible_pesos") AS INT64) AS credito_max_disp_pesos,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.credito_maximo_segun_disponible_uvr") AS INT64) AS credito_max_disp_uvr,
+      
+      -- Extracción de Arrays (Cupos)
+      COALESCE(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_pesos[2].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64), 
+        SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.credito_maximo_segun_disponible_pesos") AS INT64)) AS cupo_pesos_20,
+      COALESCE(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_uvr[2].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64), 
+        SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.credito_maximo_segun_disponible_uvr") AS INT64)) AS cupo_uvr_20,
+      COALESCE(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_uvr[4].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64), 
+        SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.credito_maximo_segun_disponible_uvr") AS INT64)) AS cupo_uvr_30,
+
+      -- Préstamos por Plazo/Tasa
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_pesos[0].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64) AS prestamo_maximo_tasa_mediana_15_anios,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_pesos[1].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS prestamo_maximo_tasa_baja_15_anios,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_pesos[3].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS prestamo_maximo_tasa_baja_20_anios,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_pesos[4].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64) AS prestamo_maximo_tasa_mediana_30_anios,
+      SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_pesos[5].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS prestamo_maximo_tasa_baja_30_anios,
+      
+      -- Flag Original
+      COALESCE(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.followUp") AS BOOL), FALSE) AS es_followup_json,
+
+      -- Fecha Ingesta
+      CURRENT_DATETIME('America/Bogota') as fecha_ultima_actualizacion
+    FROM clean_source
+  )
+
+-- 6. Proyección Final
+SELECT
+  * EXCEPT(fecha_ultima_actualizacion),
+  fecha_ultima_actualizacion,
+  DATE(timestamp_registro_calculado) AS fecha_registro
+FROM Staging_Flattened
