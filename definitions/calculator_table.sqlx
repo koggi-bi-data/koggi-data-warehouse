@@ -3,7 +3,7 @@ config {
     schema: "firestore_calculator",
     name: "Calculator_table_TEST",
     tags: ["diario"],
-    description: "Tabla Calculadora Maestra V5.1. Versión TEST Incremental con columna de auditoría.",
+    description: "Tabla Calculadora Maestra V5.1. Versión TEST Incremental pura (sin RN físico).",
     bigquery: {
         partitionBy: "fecha_registro",
         clusterBy: ["identificacion", "id_lead"]
@@ -17,7 +17,7 @@ WITH
     *
   FROM
     ${ref("Calculator_raw_latest")}
-    /* Filtro incremental: solo trae registros más nuevos que el máximo existente en esta tabla */
+    /* Filtro incremental: solo trae registros más nuevos que el máximo existente */
     ${when(incremental(), `WHERE timestamp > (SELECT MAX(timestamp) FROM ${self()})`)}
   ),
   
@@ -72,7 +72,6 @@ SELECT
     WHEN es_followup_json IS TRUE THEN 'FOLLOW UP'
     ELSE 'PROFILING'
   END AS tipo_registro_origen,
-  ROW_NUMBER() OVER (PARTITION BY id_lead ORDER BY timestamp_registro_calculado ASC) AS rn,
   COALESCE(SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.cuota_pesos[2].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64), SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.credito_maximo_segun_disponible_pesos") AS INT64)) AS valor_credito_pesos_20_anios,
   COALESCE(SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.cuota_uvr[2].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64), SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.credito_maximo_segun_disponible_uvr") AS INT64)) AS valor_credito_uvr_20_anios,
   COALESCE(SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.cuota_uvr[4].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64), SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.credito_maximo_segun_disponible_uvr") AS INT64)) AS valor_credito_uvr_30_anios,
