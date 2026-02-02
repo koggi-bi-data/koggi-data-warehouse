@@ -7,7 +7,7 @@ config {
     bigquery: {
         partitionBy: "DATE(timestamp_registro)",
         clusterBy: ["identificacion", "constructora"],
-        updatePartitionFilter: "timestamp_registro >= CURRENT_TIMESTAMP() - INTERVAL 3 DAY"
+        updatePartitionFilter: "timestamp_registro >= CURRENT_DATETIME() - INTERVAL 3 DAY"
     },
     tags: ["diario", "profiling", "lite"]
 }
