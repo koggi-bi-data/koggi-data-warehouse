@@ -136,7 +136,7 @@ SELECT
     WHEN (COALESCE(SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.cuota_uvr[4].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64), SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.credito_maximo_segun_disponible_uvr") AS INT64)) / NULLIF(SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.valor_credito") AS INT64), 0)) < 0.95 THEN '70% a 95%'
     ELSE '≥ 95%'
   END AS rango_credito_max_uvr_30,
-  CURRENT_DATE() AS ultima_actualizacion
+  DATETIME(CURRENT_TIMESTAMP(), "America/Bogota") AS ultima_actualizacion
 FROM
   PreCalculo
 WHERE
