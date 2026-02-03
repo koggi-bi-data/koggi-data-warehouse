@@ -1,7 +1,7 @@
 config {
     type: "incremental",
     schema: "firestore_collections",
-    name: "calculator_table_lite_TEST",
+    name: "calculator_table_lite",
     uniqueKey: ["document_id"],
     description: "Tabla Maestra Profiling Lite. Simulaciones rápidas y causales aplanadas.",
     bigquery: {
