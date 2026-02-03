@@ -84,6 +84,6 @@ SELECT
     SELECT STRING_AGG(DISTINCT UPPER(value), ' | ')
     FROM UNNEST(REGEXP_EXTRACT_ALL(causales_nested_json, r':"([^"]+)"')) AS value
   ) AS motivos_rechazo_concatenados,
-  CURRENT_TIMESTAMP() AS fecha_actualizacion
+  DATETIME(CURRENT_TIMESTAMP(), "America/Bogota") AS fecha_actualizacion
 FROM
   parsed_layer
