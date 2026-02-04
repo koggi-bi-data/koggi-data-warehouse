@@ -214,7 +214,7 @@ WITH
       WHEN causal_unificada_cruda IN ('SCORE',
       'SCORE MENOR AL REQUERIDO',
       'SIN CAUSAL') THEN 'SCORE MENOR AL REQUERIDO'
-      ELSE causal_unificada_cruda,
+      ELSE causal_unificada_cruda
   END 
     AS causales_banco_constructor_normalizado,
   DATETIME(CURRENT_TIMESTAMP(), "America/Bogota") as ultima_actualizacion
