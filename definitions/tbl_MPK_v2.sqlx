@@ -14,7 +14,7 @@ config {
 
 WITH
   CalculatorData AS (
-  -- Unificación de fuentes de calculadora
+  -- Unificación segura de fuentes de calculadora
   SELECT
     CAST(document_id AS STRING) AS document_id,
     proyecto,
@@ -56,7 +56,7 @@ WITH
     SAFE_CAST(id_mpk AS INT64) AS id_mpk,
     CAST(idFamilyGroup AS STRING) AS idFamilyGroup,
     FechaCambio,
-    -- Mantenemos lógica de estado
+    response,
     CASE
       WHEN JSON_EXTRACT_SCALAR(response, '$.error') IS NOT NULL THEN 'ERROR'
       ELSE 'EXITOSO'
@@ -72,156 +72,135 @@ WITH
     JSON_EXTRACT_SCALAR(response, '$.viable_pesos_20') AS viable_pesos_20,
     JSON_EXTRACT_SCALAR(response, '$.viable_uvr_20') AS viable_uvr_20,
     JSON_EXTRACT_SCALAR(response, '$.viable_uvr_30') AS viable_uvr_30,
-    JSON_EXTRACT_SCALAR(response, '$.aplica_bbva') AS aplica_bbva,
-    JSON_EXTRACT_SCALAR(response, '$.aplica_itau') AS aplica_itau,
-    JSON_EXTRACT_SCALAR(response, '$.aplica_occidente') AS aplica_occidente,
-    JSON_EXTRACT_SCALAR(response, '$.aplica_bancolombia') AS aplica_bancolombia,
-    JSON_EXTRACT_SCALAR(response, '$.aplica_caja_social') AS aplica_caja_social,
-    JSON_EXTRACT_SCALAR(response, '$.aplica_banco_bogota') AS aplica_banco_bogota,
-    JSON_EXTRACT_SCALAR(response, '$.aplica_credifamilia') AS aplica_credifamilia,
+    IFNULL(NULLIF(JSON_EXTRACT_SCALAR(response, '$.aplica_bbva'), ''), 'NO APLICA') AS aplica_bbva,
+    IFNULL(NULLIF(JSON_EXTRACT_SCALAR(response, '$.aplica_itau'), ''), 'NO APLICA') AS aplica_itau,
+    IFNULL(NULLIF(JSON_EXTRACT_SCALAR(response, '$.aplica_occidente'), ''), 'NO APLICA') AS aplica_occidente,
+    IFNULL(NULLIF(JSON_EXTRACT_SCALAR(response, '$.aplica_bancolombia'), ''), 'NO APLICA') AS aplica_bancolombia,
+    IFNULL(NULLIF(JSON_EXTRACT_SCALAR(response, '$.aplica_caja_social'), ''), 'NO APLICA') AS aplica_caja_social,
+    IFNULL(NULLIF(JSON_EXTRACT_SCALAR(response, '$.aplica_banco_bogota'), ''), 'NO APLICA') AS aplica_banco_bogota,
+    IFNULL(NULLIF(JSON_EXTRACT_SCALAR(response, '$.aplica_credifamilia'), ''), 'NO APLICA') AS aplica_credifamilia,
     JSON_EXTRACT_SCALAR(response, '$.necesita_codeudor') AS necesita_codeudor,
+    JSON_EXTRACT_SCALAR(response, '$.causal_no_cumplimiento') AS causal_no_cumplimiento_cruda,
     JSON_EXTRACT_SCALAR(response, '$.cumple_con_bancos_koggi') AS cumple_con_bancos_koggi,
     JSON_EXTRACT_SCALAR(response, '$.banco_constructor_nombre') AS banco_constructor_nombre,
     JSON_EXTRACT_SCALAR(response, '$.banco_constructor_nit') AS banco_constructor_nit,
     JSON_EXTRACT_SCALAR(response, '$.causales_banco_constructor') AS causales_banco_constructor,
     JSON_EXTRACT_SCALAR(response, '$.cumple_con_banco_constructor') AS cumple_con_banco_constructor,
-    JSON_EXTRACT_SCALAR(response, '$.causal_no_cumplimiento') AS causal_no_cumplimiento_cruda
+    JSON_EXTRACT_SCALAR(response, '$.resumen_viabilidad_banco') AS resumen_viabilidad_banco_json
   FROM
-    ${ref("tbl_sq_mpk")}
-    -- Solo procesamos datos nuevos en ejecuciones incrementales
-    ${when(incremental(), `WHERE FechaCambio >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)`)} ),
-    BaseCausalUnificada AS (
-    SELECT
-      mpk.*,
-      calc.proyecto,
-      calc.constructora,
-      calc.nombre,
-      calc.id_lead,
-      calc.document_id,
-      calc.tipo_vivienda,
-      calc.valor_credito,
-      calc.valor_inmueble,
-      prof.email,
-      prof.phone,
-      prof.id,
-      prof.rol,
-      prof.qualification,
-      lboard.uid_entity,
-      dataprojects.delivery_at,
-      UPPER(CASE
-          WHEN mpk.causales_banco_constructor IS NOT NULL AND TRIM(mpk.causales_banco_constructor) != '' AND UPPER(TRIM(mpk.causales_banco_constructor)) NOT IN ('SIN BANCO CONSTRUCTOR', 'CUMPLE', 'VIABLE') THEN TRIM(mpk.causales_banco_constructor)
-          WHEN mpk.causal_no_cumplimiento_cruda IS NOT NULL
-        AND TRIM(mpk.causal_no_cumplimiento_cruda) != '' THEN TRIM(mpk.causal_no_cumplimiento_cruda)
-          ELSE 'SIN CAUSAL'
-      END
-        ) AS causal_unificada_cruda,
-      CASE
-        WHEN mpk.cumple_con_banco_constructor IN ('VIABLE', 'VIABLE EN ANÁLISIS') THEN mpk.cumple_con_banco_constructor
-        ELSE 'NO VIABLE'
-    END
-      AS resumen_viabilidad_banco_calculado,
-      ( (CASE
-            WHEN estado = 'EXITOSO' AND aplica_bbva = 'APLICA' THEN 1
-            ELSE 0
-        END
-          ) + (CASE
-            WHEN estado = 'EXITOSO' AND aplica_itau = 'APLICA' THEN 1
-            ELSE 0
-        END
-          ) + (CASE
-            WHEN estado = 'EXITOSO' AND aplica_bancolombia = 'APLICA' THEN 1
-            ELSE 0
-        END
-          ) + (CASE
-            WHEN estado = 'EXITOSO' AND aplica_occidente = 'APLICA' THEN 1
-            ELSE 0
-        END
-          ) + (CASE
-            WHEN estado = 'EXITOSO' AND aplica_caja_social = 'APLICA' THEN 1
-            ELSE 0
-        END
-          ) + (CASE
-            WHEN estado = 'EXITOSO' AND aplica_banco_bogota = 'APLICA' THEN 1
-            ELSE 0
-        END
-          ) + (CASE
-            WHEN estado = 'EXITOSO' AND aplica_credifamilia = 'APLICA' THEN 1
-            ELSE 0
-        END
-          ) ) AS total_bancos_aplica_calculado,
-      CASE
-        WHEN prof.rol = 'TITULAR' AND mpk.idFamilyGroup != '' THEN 'Grupo Familiar'
-        WHEN (mpk.idFamilyGroup IS NULL
-        OR mpk.idFamilyGroup = '')
-      AND prof.rol = 'TITULAR'
-      AND fam.principalIdLead IS NULL THEN 'Único Comprador'
-        ELSE NULL
-    END
-      AS validacion_unidades_vivienda_calculado
-    FROM
-      mpk_parsed AS mpk
-    LEFT JOIN
-      CalculatorData AS calc
-    ON
-      mpk.id_calculadora = calc.document_id
-    LEFT JOIN
-      ${ref("tbl_profiling_TEST")} AS prof
-    ON
-      prof.id = calc.id_lead
-    LEFT JOIN
-      ${ref("tbl_entity_database")} AS entitydb
-    ON
-      entitydb.key = calc.constructora
-    LEFT JOIN
-      ${ref("tbl_looker_board")} AS lboard
-    ON
-      lboard.entity_id = entitydb.id_entity_database
-    LEFT JOIN
-      ${ref("tbl_builder_projects")} AS dataprojects
-    ON
-      LOWER(TRIM(dataprojects.name)) = LOWER(TRIM(calc.proyecto))
-    LEFT JOIN
-      FamiliarGroups AS fam
-    ON
-      fam.principalIdLead = calc.id_lead )
+    ${ref("tbl_sq_mpk")} ${when(incremental(), `WHERE FechaCambio >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)`)} ),
+  BaseCausalUnificada AS (
   SELECT
-    * EXCEPT(causal_unificada_cruda,
-      causal_no_cumplimiento_cruda,
-      resumen_viabilidad_banco_calculado,
-      total_bancos_aplica_calculado,
-      validacion_unidades_vivienda_calculado),
-    resumen_viabilidad_banco_calculado AS resumen_viabilidad_banco,
-    total_bancos_aplica_calculado AS total_bancos_aplica,
-    validacion_unidades_vivienda_calculado AS validacion_unidades_vivienda,
-    -- Normalización de causales
+    mpk.*,
+    calc.proyecto,
+    calc.constructora,
+    calc.nombre,
+    calc.id_lead,
+    calc.document_id,
+    calc.tipo_vivienda,
+    calc.valor_credito,
+    calc.valor_inmueble,
+    prof.email,
+    prof.phone,
+    prof.id,
+    prof.rol,
+    prof.qualification,
+    lboard.uid_entity,
+    dataprojects.delivery_at,
+    UPPER(CASE
+        WHEN mpk.causales_banco_constructor IS NOT NULL AND TRIM(mpk.causales_banco_constructor) != '' AND UPPER(TRIM(mpk.causales_banco_constructor)) NOT IN ('SIN BANCO CONSTRUCTOR', 'CUMPLE', 'VIABLE') THEN TRIM(mpk.causales_banco_constructor)
+        WHEN mpk.causal_no_cumplimiento_cruda IS NOT NULL
+      AND TRIM(mpk.causal_no_cumplimiento_cruda) != '' THEN TRIM(mpk.causal_no_cumplimiento_cruda)
+        ELSE 'SIN CAUSAL'
+    END
+      ) AS causal_unificada_cruda,
     CASE
-      WHEN TRIM(causal_no_cumplimiento_cruda) IS NULL OR TRIM(causal_no_cumplimiento_cruda) = '' THEN 'SCORE MENOR AL REQUERIDO'
-      WHEN causal_no_cumplimiento_cruda IN ('CAPACIDAD',
-      'CAPACIDAD DE ENDEUDAMIENTO',
-      'EXCEDE LÍMITE DE CRÉDITO') THEN 'CAPACIDAD DE PAGO'
-      WHEN causal_no_cumplimiento_cruda IN ('ENDEUDAMENTO', 'ENDEUDAMIENTO') THEN 'NIVEL DE ENDEUDAMIENTO'
-      WHEN causal_no_cumplimiento_cruda IN ('INGRESO',
-      'INGRESO FINAL') THEN 'INGRESO INSUFICIENTE'
-      WHEN causal_no_cumplimiento_cruda IN ('SCORE', 'SCORE MENOR AL REQUERIDO') THEN 'SCORE MENOR AL REQUERIDO'
-      ELSE UPPER(causal_no_cumplimiento_cruda)
+      WHEN mpk.cumple_con_banco_constructor IN ('VIABLE', 'VIABLE EN ANÁLISIS') THEN mpk.cumple_con_banco_constructor
+      ELSE 'NO VIABLE'
   END
-    AS causal_no_cumplimiento,
+    AS resumen_viabilidad_banco,
+    ( (CASE
+          WHEN estado = 'EXITOSO' AND aplica_bbva = 'APLICA' THEN 1
+          ELSE 0
+      END
+        ) + (CASE
+          WHEN estado = 'EXITOSO' AND aplica_itau = 'APLICA' THEN 1
+          ELSE 0
+      END
+        ) + (CASE
+          WHEN estado = 'EXITOSO' AND aplica_bancolombia = 'APLICA' THEN 1
+          ELSE 0
+      END
+        ) + (CASE
+          WHEN estado = 'EXITOSO' AND aplica_occidente = 'APLICA' THEN 1
+          ELSE 0
+      END
+        ) + (CASE
+          WHEN estado = 'EXITOSO' AND aplica_caja_social = 'APLICA' THEN 1
+          ELSE 0
+      END
+        ) + (CASE
+          WHEN estado = 'EXITOSO' AND aplica_banco_bogota = 'APLICA' THEN 1
+          ELSE 0
+      END
+        ) + (CASE
+          WHEN estado = 'EXITOSO' AND aplica_credifamilia = 'APLICA' THEN 1
+          ELSE 0
+      END
+        ) ) AS total_bancos_aplica,
+    
     CASE
-      WHEN causal_unificada_cruda IN ('CAPACIDAD', 'CAPACIDAD DE ENDEUDAMIENTO', 'EXCEDE LÍMITE DE CRÉDITO') THEN 'CAPACIDAD DE PAGO'
-      WHEN causal_unificada_cruda IN ('ENDEUDAMENTO',
-      'ENDEUDAMIENTO') THEN 'NIVEL DE ENDEUDAMIENTO'
-      WHEN causal_unificada_cruda IN ('INGRESO', 'INGRESO FINAL') THEN 'INGRESO INSUFICIENTE'
-      WHEN causal_unificada_cruda IN ('SCORE',
-      'SCORE MENOR AL REQUERIDO',
-      'SIN CAUSAL') THEN 'SCORE MENOR AL REQUERIDO'
-      ELSE causal_unificada_cruda
-  END 
-    AS causales_banco_constructor_normalizado,
+      WHEN prof.rol = 'TITULAR' AND mpk.idFamilyGroup != '' THEN 'Grupo Familiar'
+      WHEN mpk.idFamilyGroup IS NULL AND prof.rol = 'TITULAR' AND fam.principalIdLead IS NULL THEN 'Único Comprador'
+      ELSE NULL
+  END
+    AS validacion_unidades_vivienda
+  FROM mpk_parsed AS mpk
+  LEFT JOIN CalculatorData AS calc ON mpk.id_calculadora = calc.document_id
+  LEFT JOIN ${ref("tbl_profiling_TEST")} AS prof ON prof.id = calc.id_lead
+  LEFT JOIN ${ref("tbl_entity_database")} AS entitydb ON entitydb.key = calc.constructora
+  LEFT JOIN ${ref("tbl_looker_board")} AS lboard ON lboard.entity_id = entitydb.id_entity_database
+  LEFT JOIN ${ref("tbl_builder_projects")} AS dataprojects ON LOWER(TRIM(dataprojects.name)) = LOWER(TRIM(calc.proyecto))
+  LEFT JOIN FamiliarGroups AS fam ON fam.principalIdLead = calc.id_lead )
+
+SELECT
+  * EXCEPT (causal_unificada_cruda, causal_no_cumplimiento_cruda, response, resumen_viabilidad_banco_json),
+  UPPER(proyecto) as proyecto_normalizado,
+
+  -- Normalización de causales
+  CASE
+    WHEN TRIM(causal_no_cumplimiento_cruda) IS NULL OR TRIM(causal_no_cumplimiento_cruda) = '' THEN 'SCORE MENOR AL REQUERIDO'
+    WHEN causal_no_cumplimiento_cruda IN ('CAPACIDAD', 'CAPACIDAD DE ENDEUDAMIENTO', 'EXCEDE LÍMITE DE CRÉDITO') THEN 'CAPACIDAD DE PAGO'
+    WHEN causal_no_cumplimiento_cruda IN ('ENDEUDAMENTO', 'ENDEUDAMIENTO') THEN 'NIVEL DE ENDEUDAMIENTO'
+    WHEN causal_no_cumplimiento_cruda IN ('INGRESO', 'INGRESO FINAL') THEN 'INGRESO INSUFICIENTE'
+    WHEN causal_no_cumplimiento_cruda IN ('SCORE', 'SCORE MENOR AL REQUERIDO') THEN 'SCORE MENOR AL REQUERIDO'
+    ELSE UPPER(causal_no_cumplimiento_cruda)
+  END AS causal_no_cumplimiento,
+
+  CASE
+    WHEN causal_unificada_cruda IN ('CAPACIDAD', 'CAPACIDAD DE ENDEUDAMIENTO', 'EXCEDE LÍMITE DE CRÉDITO') THEN 'CAPACIDAD DE PAGO'
+    WHEN causal_unificada_cruda IN ('ENDEUDAMENTO', 'ENDEUDAMIENTO') THEN 'NIVEL DE ENDEUDAMIENTO'
+    WHEN causal_unificada_cruda IN ('INGRESO', 'INGRESO FINAL') THEN 'INGRESO INSUFICIENTE'
+    WHEN causal_unificada_cruda IN ('SCORE', 'SCORE MENOR AL REQUERIDO','SIN CAUSAL') THEN 'SCORE MENOR AL REQUERIDO'
+    ELSE causal_unificada_cruda
+  END AS causales_banco_constructor_normalizado,
+
+  UPPER(CASE
+    WHEN causales_banco_constructor IN ('CUMPLE','ENDEUDAMIENTO','CAPACIDAD','Ocupación') THEN causales_banco_constructor
+    WHEN UPPER(causales_banco_constructor) IN ('SCORE') THEN 'SCORE'
+    WHEN UPPER(causales_banco_constructor) IN ('INGRESO FINAL','INGRESO') THEN 'INGRESO'
+    ELSE 'SIN REGISTRO'
+  END) AS causal_banco_constructor_dashboard,
+
+  CASE
+   WHEN total_bancos_aplica = 0 and viabilidad = 'CON EXCEPCIONES' THEN 'NO VIABLE'
+   WHEN total_bancos_aplica = 1 and viabilidad = 'CON EXCEPCIONES' THEN 'VIABLE EN ANÁLISIS'
+   ELSE viabilidad
+  END AS viabilidad_general_koggi_dashboard,
+
   DATETIME(CURRENT_TIMESTAMP(), "America/Bogota") as ultima_actualizacion
-  FROM
-    BaseCausalUnificada
-  WHERE
-    validacion_unidades_vivienda_calculado IS NOT NULL
-    AND estado = 'EXITOSO'
-  QUALIFY
-    ROW_NUMBER() OVER(PARTITION BY id_mpk ORDER BY FechaCambio DESC) = 1
+
+FROM BaseCausalUnificada
+WHERE validacion_unidades_vivienda IS NOT NULL 
+AND estado = 'EXITOSO' 
+QUALIFY ROW_NUMBER() OVER(PARTITION BY id_mpk ORDER BY FechaCambio DESC) = 1
