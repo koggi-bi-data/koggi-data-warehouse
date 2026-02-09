@@ -46,7 +46,7 @@ stg_profiling AS (
     CUOTAS_TITULAR,
     housingLawIndicator,
     idFamilyGroup
-  FROM ${ref("tbl_profiling_TEST")}
+  FROM ${ref("tbl_profiling")}
   -- Filtro incremental para no procesar todo siempre
   ${when(incremental(), `WHERE DATE(createdAt) >= CURRENT_DATE() - 3`)}
 ),
