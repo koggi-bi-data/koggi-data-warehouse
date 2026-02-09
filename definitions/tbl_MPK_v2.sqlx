@@ -7,8 +7,7 @@ config {
     description: "Tabla unificada de Motor de Política de Crédito (MPK). Versión incremental optimizada.",
     bigquery: {
         partitionBy: "DATE_TRUNC(fecha_ejecucion, MONTH)",
-        clusterBy: ["constructora", "estado"],
-        updatePartitionFilter: "fecha_ejecucion >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)"
+        clusterBy: ["constructora", "estado"]
     }
 }
 
@@ -88,7 +87,7 @@ WITH
     JSON_EXTRACT_SCALAR(response, '$.cumple_con_banco_constructor') AS cumple_con_banco_constructor,
     JSON_EXTRACT_SCALAR(response, '$.resumen_viabilidad_banco') AS resumen_viabilidad_banco_json
   FROM
-    ${ref("tbl_sq_mpk")} ${when(incremental(), `WHERE FechaCambio >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)`)} ),
+    ${ref("tbl_sq_mpk")} ${when(incremental(), `WHERE fecha_ejecucion >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)`)} ),
   BaseCausalUnificada AS (
   SELECT
     mpk.*,
@@ -157,7 +156,7 @@ WITH
     AS validacion_unidades_vivienda
   FROM mpk_parsed AS mpk
   LEFT JOIN CalculatorData AS calc ON mpk.id_calculadora = calc.document_id
-  LEFT JOIN ${ref("tbl_profiling_TEST")} AS prof ON prof.id = calc.id_lead
+  LEFT JOIN ${ref("tbl_profiling")} AS prof ON prof.id = calc.id_lead
   LEFT JOIN ${ref("tbl_entity_database")} AS entitydb ON entitydb.key = calc.constructora
   LEFT JOIN ${ref("tbl_looker_board")} AS lboard ON lboard.entity_id = entitydb.id_entity_database
   LEFT JOIN ${ref("tbl_builder_projects")} AS dataprojects ON LOWER(TRIM(dataprojects.name)) = LOWER(TRIM(calc.proyecto))

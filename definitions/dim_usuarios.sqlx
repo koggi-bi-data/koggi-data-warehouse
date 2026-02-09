@@ -1,0 +1,54 @@
+config {
+    type: "table",
+    schema: "BI",
+    name: "dim_usuarios",
+    description: "Tabla Maestra de Usuarios y Roles unificados por email y Constructora",
+    tags: ["identidad","diario"],
+    bigquery: {
+        clusterBy: ['constructora_key', 'rol_negocio']
+    }
+}
+
+with usuarios_base as (
+  select
+    created_at as fecha_creacion,
+    email,
+    name as nombre_usuario,
+    entity_key as constructora_key,
+    id_group,
+    active as es_activo,
+    upper(trim(concat(email, '-', entity_key))) as user_pk
+  from ${ref("tbl_user")}
+  where email is not null
+), 
+
+roles as (
+  select
+    id as id_group,
+    upper(name) as rol_negocio
+  from ${ref("tbl_groups")}
+),
+
+constructora as (
+  select
+    key as constructora_key,
+    entity_name as nombre_constructora,
+    entity_type as tipo_constructora,
+    nit as nit_constructora
+  from ${ref("tbl_entity_database")}
+)
+
+select
+  date(u.fecha_creacion) as fecha_creacion,
+  u.user_pk,
+  u.email,
+  u.nombre_usuario,
+  u.constructora_key,
+  c.nombre_constructora,
+  coalesce(r.rol_negocio, 'SIN ROL') as rol_negocio,
+  u.es_activo,
+  current_datetime('America/Bogota') as fecha_actualizacion
+from usuarios_base u
+left join roles r on u.id_group = r.id_group
+left join constructora c on u.constructora_key = c.constructora_key
+qualify row_number() over(partition by u.user_pk order by u.es_activo) = 1
