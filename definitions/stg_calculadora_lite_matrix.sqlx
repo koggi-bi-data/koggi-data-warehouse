@@ -1,0 +1,92 @@
+config {
+    type: "table",
+    schema: "BI",
+    tags: ["profiling", "lite", "finance_matrix"],
+    description: "Anexo Financiero. Parsing único + Lógica de Negocio + Redondeo a 2 decimales.",
+    bigquery: {
+        partitionBy: "DATE(timestamp_registro)",
+        clusterBy: ["calificacion_financiera"]
+    }
+}
+
+WITH raw_source AS (
+    SELECT
+        document_id,
+        DATETIME(created_at, "America/Bogota") AS timestamp_registro,
+        SAFE_CAST(data AS STRING) AS json_str
+    FROM ${ref("Calculator_light")} 
+    WHERE data IS NOT NULL
+),
+
+-- CAPA DE EXTRACCIÓN
+extraction_layer AS (
+    SELECT
+        document_id,
+        timestamp_registro,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.id_lead') AS INT64) AS id_lead,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.identificacion') AS INT64) AS identificacion,
+        TRIM(JSON_EXTRACT_SCALAR(json_str, '$.constructora')) AS constructora,
+        TRIM(JSON_EXTRACT_SCALAR(json_str, '$.proyecto')) AS proyecto,
+        UPPER(JSON_EXTRACT_SCALAR(json_str, '$.calificacion')) AS calificacion,
+        UPPER(JSON_EXTRACT_SCALAR(json_str, '$.koggi_profiling')) AS koggi_profiling,
+        JSON_EXTRACT_SCALAR(json_str, '$.causales') AS causales_raw,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.ingresos') AS FLOAT64) AS ingresos, 
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.cuotas_titular') AS FLOAT64) AS obligaciones_financieras,         
+        ROUND(SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.disponible_cuota_segun_ingresos') AS FLOAT64), 2) AS disponible_ingresos_pesos,
+        ROUND(SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.endeudamiento_financiero') AS FLOAT64), 2) AS endeudamiento_financiero,
+        ROUND(SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.relacion_cuota_ingreso_preselecta') AS FLOAT64), 2) AS relacion_cuota_ingreso_preselecta,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.credito_maximo_segun_disponible_pesos') AS INT64) AS credito_maximo_segun_disponible_pesos,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.credito_maximo_segun_disponible_uvr') AS INT64) AS credito_maximo_segun_disponible_uvr,     
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.maximo_cuota_ley_vivienda') AS FLOAT64) AS tope_ley_vivienda_pesos,
+        JSON_EXTRACT_SCALAR(json_str, '$.indicador_endeudamiento_financiero') AS indicador_endeudamiento_financiero,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.capacidad_pago_preselecta') AS FLOAT64) AS capacidad_endeudamiento_pct,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.cuota_pesos[0].tasa_mediana.cuota') AS FLOAT64) AS cuota_pesos_15,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.cuota_pesos[0].tasa_mediana.prestamo_maximo') AS INT64) AS cupo_pesos_15,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.cuota_pesos[2].tasa_mediana.cuota') AS FLOAT64) AS cuota_pesos_20,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.cuota_pesos[2].tasa_mediana.prestamo_maximo') AS INT64) AS cupo_pesos_20,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.cuota_pesos[4].tasa_mediana.cuota') AS FLOAT64) AS cuota_pesos_30,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.cuota_pesos[4].tasa_mediana.prestamo_maximo') AS INT64) AS cupo_pesos_30,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.cuota_uvr[2].tasa_mediana.cuota') AS FLOAT64) AS cuota_uvr_20,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.cuota_uvr[2].tasa_mediana.prestamo_maximo') AS INT64) AS cupo_uvr_20,
+        SAFE_CAST(JSON_EXTRACT_SCALAR(json_str, '$.cuota_uvr[4].tasa_mediana.prestamo_maximo') AS INT64) AS cupo_uvr_30
+    FROM raw_source
+)
+
+-- CAPA DE NEGOCIO
+SELECT
+    document_id,
+    timestamp_registro,
+    id_lead,
+    identificacion,
+    constructora,
+    proyecto,
+    calificacion AS calificacion_financiera,
+    koggi_profiling,
+    causales_raw,
+    CASE 
+        WHEN causales_raw LIKE '%ENDEUDAMIENTO%' THEN 'Endeudamiento Alto'
+        WHEN causales_raw LIKE '%VIDA CREDITICIA%' THEN 'Sin Historia Crediticia'
+        WHEN causales_raw LIKE '%MORA%' THEN 'Reportes Negativos'
+        WHEN calificacion = 'VERDE' THEN 'Viable'
+        ELSE 'Otras Causales'
+    END AS causal_rechazo_categoria,
+    ingresos,
+    obligaciones_financieras,
+    disponible_ingresos_pesos,
+    endeudamiento_financiero,
+    relacion_cuota_ingreso_preselecta,
+    credito_maximo_segun_disponible_pesos,
+    credito_maximo_segun_disponible_uvr,
+    tope_ley_vivienda_pesos,
+    indicador_endeudamiento_financiero,
+    capacidad_endeudamiento_pct,
+    cuota_pesos_15, 
+    cupo_pesos_15,
+    cuota_pesos_20,
+    cupo_pesos_20,
+    cuota_pesos_30,
+    cupo_pesos_30,    
+    cuota_uvr_20, 
+    cupo_uvr_20,
+    cupo_uvr_30
+FROM extraction_layer
