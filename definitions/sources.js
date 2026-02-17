@@ -50,12 +50,12 @@ declare({
 });
 
 // 7. Edad Calculada
-declare({
-  database: "davinci-onegroup-prod",
-  schema: "BI",
-  name: "stg_hdc_parsed_age",
-  description: "Tabla auxiliar con edad calculada"
-});
+// declare({
+//   database: "davinci-onegroup-prod",
+//   schema: "BI",
+//   name: "stg_hdc_parsed_age",
+//   description: "Tabla auxiliar con edad calculada"
+// });
 
 // 8. Base Leads Pro
 declare({

@@ -171,7 +171,7 @@ quick_win_source_data AS (
 
   FROM stg_profiling AS p
   -- Join con la tabla TEST que acabamos de limpiar
-  LEFT JOIN ${ref("stg_hdc_parsed_age_TEST")} AS age ON p.identification = age.identificacion
+  LEFT JOIN ${ref("stg_hdc_parsed_age")} AS age ON p.identification = age.identificacion
   LEFT JOIN stg_calculator AS c ON p.lead_id = c.id_lead
   LEFT JOIN stg_calculator_fam as cfam ON p.idFamilyGroup = cfam.idFamilyGroup
   LEFT JOIN grupos_usuarios AS usr ON p.createdEmail = usr.email AND p.Constructora = usr.entity_key
