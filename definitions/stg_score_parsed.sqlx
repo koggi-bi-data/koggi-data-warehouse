@@ -85,7 +85,7 @@ WITH base_parsed AS (
       ${ref("tbl_sq_score_validity")}
 
   -- LOGICA INCREMENTAL
-  ${when(incremental(), `WHERE CAST(score_date AS TIMESTAMP) > (SELECT MAX(fecha_registro_score) FROM ${self()})`)}
+  ${when(incremental(), `WHERE DATETIME(CAST(score_date AS TIMESTAMP), "America/Bogota") > (SELECT MAX(fecha_registro_score) FROM ${self()})`)}
 )
 
 SELECT
