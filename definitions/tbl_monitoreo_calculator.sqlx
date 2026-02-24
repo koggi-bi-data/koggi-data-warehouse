@@ -1,0 +1,77 @@
+config {
+    type: "table",
+    schema: "BI",
+    name: "tbl_monitoreo_calculator",
+    description: "Capa Gold OBT: Monitoreo Histórico Vectorizado con tipado estricto y seguridad Looker",
+    bigquery: {
+        partitionBy: "fecha_registro_reciente",
+        clusterBy: ["uid_looker", "identificacion", "id_lead"]
+    },
+    assertions: {
+        nonNull: ["uid_looker", "identificacion", "id_lead"]
+    }
+}
+
+WITH master_history AS (
+    SELECT * FROM ${ref("BI", "tbl_calculator_master")}
+)
+
+SELECT 
+    -- 0. Llave Criptográfica Looker (Imprescindible para el filtro)
+    uid_looker,
+    
+    -- 1. Identificadores y Dimensiones
+    id_lead, 
+    identificacion, 
+    valor_inmueble,
+    proyecto, 
+    constructora,
+    nombre,
+    tipo_vivienda,
+    
+    -- 2. Fechas (Casteo estricto a DATE, ordenadas por DATETIME)
+    fecha_registro AS fecha_registro_reciente,
+    LAG(fecha_registro) OVER(PARTITION BY identificacion ORDER BY timestamp_registro_calculado ASC) AS fecha_registro_anterior,
+
+    -- 3. Textos y Textos de Negocio (STRING)
+    calificacion AS calificacion_reciente,
+    LAG(calificacion) OVER(PARTITION BY identificacion ORDER BY timestamp_registro_calculado ASC) AS calificacion_anterior,
+    
+    koggi_profiling AS koggi_profiling_reciente,
+    LAG(koggi_profiling) OVER(PARTITION BY identificacion ORDER BY timestamp_registro_calculado ASC) AS koggi_profiling_anterior,
+    
+    indicador_ley_vivienda AS indicador_ley_vivienda_reciente,
+    LAG(indicador_ley_vivienda) OVER(PARTITION BY identificacion ORDER BY timestamp_registro_calculado ASC) AS indicador_ley_vivienda_anterior,
+    
+    indicador_causales AS indicador_causales_reciente, 
+    LAG(indicador_causales) OVER(PARTITION BY identificacion ORDER BY timestamp_registro_calculado ASC) AS indicador_causales_anterior,
+
+    -- 4. Métricas Financieras (INT64)
+    score AS score_reciente, 
+    LAG(score) OVER(PARTITION BY identificacion ORDER BY timestamp_registro_calculado ASC) AS score_anterior, 
+    
+    ingresos AS ingresos_reciente, 
+    LAG(ingresos) OVER(PARTITION BY identificacion ORDER BY timestamp_registro_calculado ASC) AS ingresos_anterior,
+    
+    personas_cargo AS personas_cargo_reciente,
+    LAG(personas_cargo) OVER(PARTITION BY identificacion ORDER BY timestamp_registro_calculado ASC) AS personas_cargo_anterior,
+    
+    diferencia_credito_maximo AS diferencia_credito_maximo_reciente,
+    LAG(diferencia_credito_maximo) OVER(PARTITION BY identificacion ORDER BY timestamp_registro_calculado ASC) AS diferencia_credito_maximo_anterior,
+    
+    credito_max_disp_pesos AS credito_maximo_segun_disponible_reciente,
+    LAG(credito_max_disp_pesos) OVER(PARTITION BY identificacion ORDER BY timestamp_registro_calculado ASC) AS credito_maximo_segun_disponible_anterior,
+
+    disponible_cuota_segun_ingresos AS disponible_cuota_segun_ingresos_reciente,
+    LAG(disponible_cuota_segun_ingresos) OVER(PARTITION BY identificacion ORDER BY timestamp_registro_calculado ASC) AS disponible_cuota_segun_ingresos_anterior,
+
+    maximo_cuota_ley_vivienda AS maximo_cuota_ley_vivienda_reciente, 
+    LAG(maximo_cuota_ley_vivienda) OVER(PARTITION BY identificacion ORDER BY timestamp_registro_calculado ASC) AS maximo_cuota_ley_vivienda_anterior,
+
+    gastos_familiares AS gastos_familiares_reciente, 
+    LAG(gastos_familiares) OVER(PARTITION BY identificacion ORDER BY timestamp_registro_calculado ASC) AS gastos_familiares_anterior,
+
+    cuotas_titular AS cuotas_titular_reciente, 
+    LAG(cuotas_titular) OVER(PARTITION BY identificacion ORDER BY timestamp_registro_calculado ASC) AS cuotas_titular_anterior
+
+FROM master_history

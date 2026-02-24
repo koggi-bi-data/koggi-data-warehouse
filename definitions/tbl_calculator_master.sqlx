@@ -4,11 +4,12 @@ config {
     name: "tbl_calculator_master",
     tags: ["diario"],
     uniqueKey: ["event_id"],
-    description: "Tabla Silver Maestra (SCD Tipo 2): Almacena el historial completo de calculadora.",
+    description: "Tabla Silver Maestra V10 (SCD Tipo 2) con herencia de Seguridad Looker.",
     bigquery: {
         partitionBy: "DATE(timestamp_registro_calculado)",
-        clusterBy: ["identificacion", "id_lead", "constructora"]
-    }
+        clusterBy: ["uid_looker", "identificacion", "id_lead", "constructora"]
+    },
+    assertions: { nonNull: ["id_lead", "uid_looker", "identificacion"], uniqueKey: ["event_id"] }
 }
 
 WITH
@@ -115,7 +116,12 @@ WITH
 
 -- 6. Proyección Final
 SELECT
-  * EXCEPT(fecha_ultima_actualizacion),
-  fecha_ultima_actualizacion,
-  DATE(timestamp_registro_calculado) AS fecha_registro
-FROM Staging_Flattened
+  f.* EXCEPT(fecha_ultima_actualizacion),
+  f.fecha_ultima_actualizacion,
+  DATE(f.timestamp_registro_calculado) AS fecha_registro,
+  look.uid_entity AS uid_looker
+FROM Staging_Flattened f
+LEFT JOIN ${ref("tbl_entity_database")} ent 
+  ON f.constructora = ent.key
+LEFT JOIN ${ref("tbl_looker_board")} look 
+  ON ent.id_entity_database = look.entity_id
