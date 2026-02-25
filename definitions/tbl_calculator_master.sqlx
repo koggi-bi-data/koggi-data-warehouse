@@ -125,3 +125,5 @@ LEFT JOIN ${ref("tbl_entity_database")} ent
   ON f.constructora = ent.key
 LEFT JOIN ${ref("tbl_looker_board")} look 
   ON ent.id_entity_database = look.entity_id
+WHERE look.uid_entity IS NOT NULL 
+  AND f.identificacion IS NOT NULL
