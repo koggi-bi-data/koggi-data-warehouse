@@ -28,6 +28,7 @@ SELECT
     constructora,
     nombre,
     tipo_vivienda,
+    valor_credito,
     
     -- 2. Fechas (Casteo estricto a DATE, ordenadas por DATETIME)
     fecha_registro AS fecha_registro_reciente,
