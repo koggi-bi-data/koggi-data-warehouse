@@ -64,7 +64,7 @@ stg_calculator AS (
     rango_credito_max_uvr_30, valor_credito, valor_credito_pesos_20_anios,
     valor_credito_uvr_20_anios, valor_credito_uvr_30_anios, credito_maximo_segun_disponible_pesos,
     credito_maximo_segun_disponible_uvr, endeudamiento
-  FROM ${ref("Calculator_table")}
+  FROM ${ref("firestore_calculator", "Calculator_table")}
   QUALIFY ROW_NUMBER() OVER(PARTITION BY id_lead ORDER BY timestamp_registro DESC) = 1
 ),
 

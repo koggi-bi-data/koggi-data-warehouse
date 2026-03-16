@@ -26,7 +26,7 @@ WITH
     calificacion,
     idFamilyGroup
   FROM
-    ${ref("firestore_calculator", "Calculator_table_TEST")}
+    ${ref("firestore_calculator", "Calculator_table")}
   UNION ALL
   SELECT
     CAST(document_id AS STRING) AS document_id,
@@ -40,7 +40,7 @@ WITH
     calificacion,
     idFamilyGroup
   FROM
-    ${ref("firestore_collections", "Calculator_table_TEST")} ),
+    ${ref("firestore_collections", "Calculator_table")} ),
   FamiliarGroups AS (
   SELECT
     DISTINCT principalIdLead
