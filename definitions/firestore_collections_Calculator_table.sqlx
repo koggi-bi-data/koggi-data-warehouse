@@ -1,7 +1,7 @@
 config {
     type: "incremental",
     schema: "firestore_collections",
-    name: "Calculator_table_TEST",
+    name: "Calculator_table",
     description: "Tabla Calculadora Family Group V1. Versión TEST Incremental con columna de auditoría.",
     bigquery: {
         partitionBy: "fecha_registro",

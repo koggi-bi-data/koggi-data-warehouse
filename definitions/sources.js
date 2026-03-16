@@ -10,12 +10,12 @@
 // });
 
 // 2. Calculadora (Simulaciones)
-declare({
-  database: "davinci-onegroup-prod",
-  schema: "firestore_calculator",
-  name: "Calculator_table",
-  description: "Resultados del motor de cálculo"
-});
+// declare({
+//   database: "davinci-onegroup-prod",
+//   schema: "firestore_calculator",
+//   name: "Calculator_table",
+//   description: "Resultados del motor de cálculo"
+// });
 
 // 3. Usuarios (Asesores)
 declare({

@@ -114,7 +114,7 @@ WITH profiling_base AS (
         leads.idHdc = hdc_validity.id_hdc
     LEFT JOIN (
         -- Seleccionamos solo el cálculo más reciente por lead
-        SELECT * FROM ${ref("Calculator_table")}
+        SELECT * FROM ${ref("firestore_calculator", "Calculator_table")}
         QUALIFY ROW_NUMBER() OVER (PARTITION BY id_lead ORDER BY timestamp DESC) = 1
     ) AS calc
     ON
