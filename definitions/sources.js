@@ -144,3 +144,13 @@ declare({
   name: "Calculator_light",
   description: "Datos crudos JSON de la calculadora Lite provenientes de Firestore"
 });
+
+
+// --- NUEVO ENTORNO: STREAM (SHADOW TEST) ---
+
+// declare({
+//   database: "davinci-onegroup-prod",
+//   schema: "central_col_stream",
+//   name: "tbl_sq_leads",
+//   description: "Tabla de leads replicada vía stream (Shadow Test de validación contra central_col)"
+// });
