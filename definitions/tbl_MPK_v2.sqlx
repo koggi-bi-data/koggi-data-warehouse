@@ -1,7 +1,7 @@
 config {
     type: "incremental",
     schema: "BI",
-    name: "tbl_MPK_v2_TEST",
+    name: "tbl_MPK_v2",
     tags: ["diario", "mpk"],
     uniqueKey: ["id_mpk"],
     description: "Tabla unificada de Motor de Política de Crédito (MPK). Versión incremental optimizada.",
@@ -87,7 +87,9 @@ WITH
     JSON_EXTRACT_SCALAR(response, '$.cumple_con_banco_constructor') AS cumple_con_banco_constructor,
     JSON_EXTRACT_SCALAR(response, '$.resumen_viabilidad_banco') AS resumen_viabilidad_banco_json
   FROM
-    ${ref("tbl_sq_mpk")} ${when(incremental(), `WHERE fecha_ejecucion >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)`)} ),
+    ${ref("tbl_sq_mpk")}
+    ${when(incremental(), `WHERE fecha_ejecucion >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)`)} ),
+    
   BaseCausalUnificada AS (
   SELECT
     mpk.*,
@@ -201,5 +203,4 @@ SELECT
 
 FROM BaseCausalUnificada
 WHERE validacion_unidades_vivienda IS NOT NULL 
-AND estado = 'EXITOSO' 
 QUALIFY ROW_NUMBER() OVER(PARTITION BY id_mpk ORDER BY FechaCambio DESC) = 1
