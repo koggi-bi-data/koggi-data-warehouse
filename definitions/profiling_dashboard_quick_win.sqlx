@@ -1,7 +1,7 @@
 config {
   type: "incremental",
   schema: "BI",
-  name: "profiling_dashboard_quick_win_TEST",
+  name: "profiling_dashboard_quick_win",
   tags: ["dashboard", "diario"],
   uniqueKey: ["lead_id"],
   description: "Tabla consolidada incremental con lógica de deduplicación y campos en parejas (Individual/Familiar).",
