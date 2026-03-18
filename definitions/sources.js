@@ -20,7 +20,7 @@
 // 3. Usuarios (Asesores)
 declare({
   database: "davinci-onegroup-prod",
-  schema: "central_col",
+  schema: "central_col_stream",
   name: "tbl_user",
   description: "Usuarios del sistema"
 });
@@ -28,7 +28,7 @@ declare({
 // 4. Grupos (Roles)
 declare({
   database: "davinci-onegroup-prod",
-  schema: "central_col",
+  schema: "central_col_stream",
   name: "tbl_groups",
   description: "Grupos de usuarios"
 });
@@ -36,7 +36,7 @@ declare({
 // 5. Entidades (Constructoras)
 declare({
   database: "davinci-onegroup-prod",
-  schema: "central_col",
+  schema: "central_col_stream",
   name: "tbl_entity_database",
   description: "Base de datos de entidades"
 });
@@ -44,7 +44,7 @@ declare({
 // 6. Looker Board (Tablero)
 declare({
   database: "davinci-onegroup-prod",
-  schema: "central_col",
+  schema: "central_col_stream",
   name: "tbl_looker_board",
   description: "Tablero de Looker"
 });
@@ -60,7 +60,7 @@ declare({
 // 8. Base Leads Pro
 declare({
   database: "davinci-onegroup-prod",
-  schema: "central_col",
+  schema: "central_col_stream",
   name: "tbl_sq_leads",
   description: "Tabla principal de leads capturados en la plataforma Pro"
 });
@@ -68,7 +68,7 @@ declare({
 // 9. Validación Score Profiling Pro
 declare({
   database: "davinci-onegroup-prod",
-  schema: "central_col",
+  schema: "central_col_stream",
   name: "tbl_sq_score_validity",
   description: "Registro de validaciones de score crediticio para perfilamiento"
 });
@@ -76,7 +76,7 @@ declare({
 // 10. Tabla HDC Profiling Pro
 declare({
   database: "davinci-onegroup-prod",
-  schema: "central_col",
+  schema: "central_col_stream",
   name: "tbl_sq_hdc_validity",
   description: "Historias de crédito (HDC) validadas para el proceso de perfilamiento"
 });
@@ -84,7 +84,7 @@ declare({
 // 11. Tabla Grupos Familiares
 declare({
   database: "davinci-onegroup-prod",
-  schema: "central_col",
+  schema: "central_col_stream",
   name: "tbl_sq_familiar_groups",
   description: "Relación de leads que conforman grupos familiares para solicitudes conjuntas"
 });
@@ -100,7 +100,7 @@ declare({
 // 13. Tabla de Motor de Política (MPK)
 declare({
   database: "davinci-onegroup-prod",
-  schema: "central_col",
+  schema: "central_col_stream",
   name: "tbl_sq_mpk",
   description: "Resultados del motor de política de crédito"
 });
@@ -108,7 +108,7 @@ declare({
 // 14. Proyectos de Constructoras
 declare({
   database: "davinci-onegroup-prod",
-  schema: "central_col",
+  schema: "central_col_stream",
   name: "tbl_builder_projects",
   description: "Metadata de proyectos de vivienda"
 });
@@ -124,7 +124,7 @@ declare({
 // 16. Leads Lite
 declare({
   database: "davinci-onegroup-prod",
-  schema: "central_col",
+  schema: "central_col_stream",
   name: "tbl_sq_leads_light",
   description: "Tabla de leads simplificados (Lite)"
 });
