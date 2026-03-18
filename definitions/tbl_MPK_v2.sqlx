@@ -54,7 +54,7 @@ WITH
     id_calculadora,
     SAFE_CAST(id_mpk AS INT64) AS id_mpk,
     CAST(idFamilyGroup AS STRING) AS idFamilyGroup,
-    FechaCambio,
+    CAST(FechaCambio AS DATE) AS FechaCambio,
     response,
     CASE
       WHEN JSON_EXTRACT_SCALAR(response, '$.error') IS NOT NULL THEN 'ERROR'
