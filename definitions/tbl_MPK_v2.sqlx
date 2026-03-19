@@ -154,8 +154,7 @@ WITH
       WHEN prof.rol = 'TITULAR' AND mpk.idFamilyGroup != '' THEN 'Grupo Familiar'
       WHEN mpk.idFamilyGroup IS NULL AND prof.rol = 'TITULAR' AND fam.principalIdLead IS NULL THEN 'Único Comprador'
       ELSE NULL
-  END
-    AS validacion_unidades_vivienda
+    END AS validacion_unidades_vivienda
   FROM mpk_parsed AS mpk
   LEFT JOIN CalculatorData AS calc ON mpk.id_calculadora = calc.document_id
   LEFT JOIN ${ref("tbl_profiling")} AS prof ON prof.id = calc.id_lead
@@ -170,6 +169,7 @@ SELECT
 
   -- Normalización de causales
   CASE
+    WHEN viabilidad = 'VIABLE' THEN NULL
     WHEN TRIM(causal_no_cumplimiento_cruda) IS NULL OR TRIM(causal_no_cumplimiento_cruda) = '' THEN 'SCORE MENOR AL REQUERIDO'
     WHEN causal_no_cumplimiento_cruda IN ('CAPACIDAD', 'CAPACIDAD DE ENDEUDAMIENTO', 'EXCEDE LÍMITE DE CRÉDITO') THEN 'CAPACIDAD DE PAGO'
     WHEN causal_no_cumplimiento_cruda IN ('ENDEUDAMENTO', 'ENDEUDAMIENTO') THEN 'NIVEL DE ENDEUDAMIENTO'
@@ -202,5 +202,5 @@ SELECT
   DATETIME(CURRENT_TIMESTAMP(), "America/Bogota") as ultima_actualizacion
 
 FROM BaseCausalUnificada
-WHERE validacion_unidades_vivienda IS NOT NULL 
+-- WHERE validacion_unidades_vivienda IS NOT NULL 
 QUALIFY ROW_NUMBER() OVER(PARTITION BY id_mpk ORDER BY FechaCambio DESC) = 1
