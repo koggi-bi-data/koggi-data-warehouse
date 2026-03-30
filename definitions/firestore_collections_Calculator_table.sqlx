@@ -51,7 +51,7 @@ SELECT
   JSON_EXTRACT_SCALAR(DATA, "$.koggi_profiling") AS koggi_profiling,
   SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.score") AS INT64) AS score,
   identificacion,
-  TRIM(CAST(JSON_EXTRACT_SCALAR(DATA, "$.id_family_group") AS STRING)) AS idFamilyGroup,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(DATA, "$.id_family_group") AS INT64) AS idFamilyGroup,
   JSON_EXTRACT(DATA, "$.fecha_registro") AS fecha,
   JSON_EXTRACT_SCALAR(DATA, "$.tipo_vivienda") AS tipo_vivienda,
   JSON_EXTRACT_SCALAR(DATA, "$.nombre") AS nombre,
