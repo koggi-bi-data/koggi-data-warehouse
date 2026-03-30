@@ -1,5 +1,6 @@
 config {
-    type: "table",
+    type: "incremental",
+    uniqueKey: ["id"],
     database: "davinci-onegroup-prod",
     schema: "BI",
     name: "tbl_profiling",
@@ -123,6 +124,16 @@ WITH profiling_base AS (
         ${ref("tbl_sq_familiar_groups")} AS fam_group
     ON
         leads.idFamilyGroup = fam_group.id
+
+    -- Segmento Actualización Delta para Merge
+    ${when(incremental(), `
+    WHERE 
+        leads.updated_at_auto > (SELECT MAX(updated_at_auto) FROM ${self})
+        OR score_validity.updated_at_auto > (SELECT MAX(updated_at_auto) FROM ${self})
+        OR hdc_validity.updated_at_auto > (SELECT MAX(updated_at_auto) FROM ${self})
+        OR fam_group.updated_at_auto > (SELECT MAX(updated_at_auto) FROM ${self})
+        OR calc.timestamp > (SELECT MAX(updated_at_auto) FROM ${self})
+    `)}
 )
 
 SELECT
