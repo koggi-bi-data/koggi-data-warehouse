@@ -88,7 +88,7 @@ WITH
     JSON_EXTRACT_SCALAR(response, '$.resumen_viabilidad_banco') AS resumen_viabilidad_banco_json
   FROM
     ${ref("tbl_sq_mpk")}
-    ${when(incremental(), `WHERE fecha_ejecucion >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)`)} ),
+    ${when(incremental(), `WHERE date(updated_at_auto) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)`)} ),
     
   BaseCausalUnificada AS (
   SELECT

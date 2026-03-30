@@ -6,8 +6,7 @@ config {
   uniqueKey: ["lead_id"],
   description: "Tabla consolidada incremental con lógica de deduplicación y campos en parejas (Individual/Familiar).",
   bigquery: {
-    partitionBy: "DATE(Fecha_creacion)",
-    updatePartitionFilter: "Fecha_creacion >= CURRENT_DATE() - 3"
+    partitionBy: "DATE(Fecha_creacion)"
   }
 }
 
@@ -17,6 +16,7 @@ stg_profiling AS (
   SELECT
     id AS lead_id,
     createdAt as Fecha_creacion,
+    updated_at_auto,
     fullname,
     builderKey as Constructora,
     identification,
@@ -52,8 +52,10 @@ stg_profiling AS (
       ORDER BY 
         IF(idFamilyGroup IS NOT NULL, 1, 0) DESC, createdAt DESC) = 1, 1, 0) AS es_intento_principal
   FROM ${ref("tbl_profiling")}
-  -- Filtro incremental para no procesar todo siempre
-  ${when(incremental(), `WHERE DATE(createdAt) >= CURRENT_DATE() - 3`)}
+  -- Ventana Móvil de 5 días sobre Fecha de Actualización
+  ${when(incremental(),`
+    WHERE DATE(updated_at_auto) >= DATE_SUB(CURRENT_DATE(), INTERVAL 5 DAY)
+  `)}
 ),
 
 -- 2. Staging de la Calculadora Individual (PROTECCIÓN: Solo 1 fila por lead)
@@ -71,7 +73,7 @@ stg_calculator AS (
 -- 3. Staging de la Calculadora Familiar (PROTECCIÓN: Solo 1 fila por Grupo Familiar)
 stg_calculator_fam AS (
   SELECT
-    idFamilyGroup, -- Llave de cruce correcta
+    idFamilyGroup,
     document_id, rango_salarios, rango_endeudamiento, rango_score, rango_credito_max_pesos_15,
     rango_credito_max_uvr_15, rango_credito_max_pesos_20, rango_credito_max_uvr_20,
     rango_credito_max_uvr_30, valor_credito, valor_credito_pesos_20_anios,
