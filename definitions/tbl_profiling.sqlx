@@ -128,11 +128,11 @@ WITH profiling_base AS (
     -- Segmento Actualización Delta para Merge
     ${when(incremental(), `
     WHERE 
-        leads.updated_at_auto > (SELECT MAX(updated_at_auto) FROM ${self})
-        OR score_validity.updated_at_auto > (SELECT MAX(updated_at_auto) FROM ${self})
-        OR hdc_validity.updated_at_auto > (SELECT MAX(updated_at_auto) FROM ${self})
-        OR fam_group.updated_at_auto > (SELECT MAX(updated_at_auto) FROM ${self})
-        OR calc.timestamp > (SELECT MAX(updated_at_auto) FROM ${self})
+        SAFE_CAST(leads.updated_at_auto AS TIMESTAMP) > (SELECT SAFE_CAST(MAX(updated_at_auto) AS TIMESTAMP) FROM ${self()})
+        OR SAFE_CAST(score_validity.updated_at_auto AS TIMESTAMP) > (SELECT SAFE_CAST(MAX(updated_at_auto) AS TIMESTAMP) FROM ${self()})
+        OR SAFE_CAST(hdc_validity.updated_at_auto AS TIMESTAMP) > (SELECT SAFE_CAST(MAX(updated_at_auto) AS TIMESTAMP) FROM ${self()})
+        OR SAFE_CAST(fam_group.updated_at_auto AS TIMESTAMP) > (SELECT SAFE_CAST(MAX(updated_at_auto) AS TIMESTAMP) FROM ${self()})
+        OR SAFE_CAST(calc.timestamp AS TIMESTAMP) > (SELECT SAFE_CAST(MAX(updated_at_auto) AS TIMESTAMP) FROM ${self()})
     `)}
 )
 
