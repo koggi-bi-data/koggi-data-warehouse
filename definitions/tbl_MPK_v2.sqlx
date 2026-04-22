@@ -40,7 +40,7 @@ WITH
     calificacion,
     idFamilyGroup
   FROM
-    ${ref("firestore_collections", "Calculator_table")} ),
+    ${ref("tbl_family_calculator_master")} ),
   FamiliarGroups AS (
   SELECT
     DISTINCT principalIdLead
