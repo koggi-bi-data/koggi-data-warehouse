@@ -1,0 +1,87 @@
+config {
+  type: "incremental",
+  schema: "BI",
+  name: "tbl_family_calculator_master",
+  description: "Tabla de Hechos (Snapshot Puro)",
+  bigquery: {
+    partitionBy: "DATE(timestamp)",
+    clusterBy: ["id_lead", "identificacion", "constructora", "proyecto"]
+  },
+  uniqueKey: ["document_id"],
+  tags: ["diario", "family_group", "facts"],
+  assertions: { 
+    nonNull: ["identificacion", "document_id", "timestamp"], 
+    uniqueKey: ["document_id"] 
+  }
+}
+
+WITH raw_base AS (
+  SELECT 
+    document_id,
+    -- Eje temporal inmutable a nivel de negocio
+    created_at AS timestamp,
+    -- Marca de agua para el motor incremental
+    COALESCE(updated_at, created_at) AS order_time,
+    data,
+    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.id_lead") AS INT64) AS id_lead_check,
+    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.identificacion") AS INT64) AS identificacion_check
+  FROM ${ref("FamilyGroupCalculator")}
+  ${when(incremental(), `WHERE COALESCE(updated_at, created_at) > (SELECT MAX(ultima_actualizacion) FROM ${self()})`)}
+),
+deduplicated AS (
+  SELECT * EXCEPT(rn_tech) 
+  FROM (
+    SELECT *, ROW_NUMBER() OVER(PARTITION BY document_id ORDER BY order_time DESC) as rn_tech 
+    FROM raw_base
+  ) 
+  WHERE rn_tech = 1
+),
+clean_source AS (
+  -- Regla Zero-Trust Flexible: Salvamos la historia completa de Koggi
+  SELECT * FROM deduplicated 
+  WHERE COALESCE(id_lead_check, identificacion_check) IS NOT NULL
+)
+SELECT
+  -- 1. LLAVES
+  document_id,
+  id_lead_check AS id_lead,
+  identificacion_check AS identificacion,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.id_family_group") AS INT64) AS idFamilyGroup,
+  JSON_EXTRACT_SCALAR(data, "$.nombre") as nombre,
+  JSON_EXTRACT_SCALAR(data, "$.constructora") as constructora,
+  JSON_EXTRACT_SCALAR(data, "$.proyecto") as proyecto,
+  JSON_EXTRACT_SCALAR(data, "$.tipo_vivienda") as tipo_vivienda,
+  JSON_EXTRACT_SCALAR(data, "$.ciudad") as ciudad,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.edad_aproximada") AS INT64) AS edad_aproximada,
+  
+  -- 2. TIEMPOS & INDICADORES 
+  timestamp,
+  order_time AS ultima_actualizacion, /* Corrección: Exponemos el campo para el self() del incremental */
+  DATETIME(TIMESTAMP(timestamp), "America/Bogota") AS fecha_registro_co,
+  JSON_EXTRACT_SCALAR(data, "$.calificacion") as calificacion,
+  JSON_EXTRACT_SCALAR(data, "$.koggi_profiling") AS koggi_profiling,
+  JSON_EXTRACT_SCALAR(data, "$.indicador_capacidad_pago_preselecta") AS indicador_cap_pago,
+  JSON_EXTRACT_SCALAR(data, "$.indicador_endeudamiento_financiero") AS indicador_endeudamiento,
+  JSON_EXTRACT_SCALAR(data, "$.indicador_ley_vivienda") AS indicador_ley_vivienda,
+  
+  -- 3. HECHOS PUROS (MÉTRICAS BASE)
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.valor_inmueble") AS INT64) AS valor_inmueble,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.valor_credito") AS INT64) AS valor_credito,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.score") AS INT64) AS score,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.ingresos") AS INT64) AS ingresos,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.personas_cargo") AS INT64) AS personas_cargo,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas_titular") AS INT64) AS cuotas_titular,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.gastos_familiares") AS INT64) AS gastos_familiares,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.credito_maximo_segun_disponible_pesos") AS INT64) AS credito_max_disp_pesos,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.credito_maximo_segun_disponible_uvr") AS INT64) AS credito_max_disp_uvr,
+
+  -- 4. HECHOS PUROS (PRÉSTAMOS MÁXIMOS / CUPOS)
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_pesos[0].tasa_mediana.prestamo_maximo") AS INT64) AS pres_max_pesos_15_anios,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_pesos[2].tasa_mediana.prestamo_maximo") AS INT64) AS pres_max_pesos_20_anios,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_pesos[4].tasa_mediana.prestamo_maximo") AS INT64) AS pres_max_pesos_30_anios,
+  
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_uvr[0].tasa_mediana.prestamo_maximo") AS INT64) AS pres_max_uvr_15_anios,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_uvr[2].tasa_mediana.prestamo_maximo") AS INT64) AS pres_max_uvr_20_anios,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_uvr[4].tasa_mediana.prestamo_maximo") AS INT64) AS pres_max_uvr_30_anios
+
+FROM clean_source
