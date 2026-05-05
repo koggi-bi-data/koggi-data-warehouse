@@ -4,88 +4,63 @@ config {
   name: "profiling_dashboard_quick_win",
   tags: ["dashboard", "diario"],
   uniqueKey: ["lead_id"],
-  description: "Tabla consolidada incremental con lógica de deduplicación y campos en parejas (Individual/Familiar).",
+  description: "Quick Win V2: Paridad 1:1 con la tabla Legacy garantizada.",
   bigquery: {
-    partitionBy: "DATE(Fecha_creacion)"
+    partitionBy: "DATE(Fecha_creacion)",
+    clusterBy: ["uid_looker", "Constructora"]
   }
 }
 
 WITH
--- 1. Staging de Profiling
-stg_profiling AS (
+-- 1. RECONSTRUCCIÓN DE LEADS Y SCORE
+stg_reconstructed_leads AS (
   SELECT
-    id AS lead_id,
-    createdAt as Fecha_creacion,
-    updated_at_auto,
-    fullname,
-    builderKey as Constructora,
-    identification,
-    gender,
-    venta_efectiva,
-    createdEmail,
-    qualification AS calificacion_sugerida,
-    ACTIVIDAD_ECONOMICA AS ocupacion,
-    rol,
-    document_id,
-    VALOR_INGRESO_FINAL AS ingresos,
-    propertyDelivery AS fecha_entrega_proyecto,
-    financeValue AS valor_a_financiar,
-    projectCity as ciudad_proyecto,
-    projectName AS nombre_proyecto,
-    propertyType AS tipo_vivienda,
-    propertyValue as valor_vivienda,
-    preselectaScore AS score,
-    preselectaDecision,
-    preselectaStatus,
-    scoring,
-    score_date,
-    INGRESO_FINAL,
-    ENDEUDAMIENTO,
-    sarlaftStatus,
-    identificationStatus,
-    CUOTAS_TITULAR,
-    housingLawIndicator,
-    idFamilyGroup,
-    -- BANDERA PARA EL FUNNEL EN LOOKER STUDIO
-    IF(ROW_NUMBER() OVER(
-      PARTITION BY identification 
-      ORDER BY 
-        IF(idFamilyGroup IS NOT NULL, 1, 0) DESC, createdAt DESC) = 1, 1, 0) AS es_intento_principal
-  FROM ${ref("tbl_profiling")}
-  -- Ventana Móvil de 5 días sobre Fecha de Actualización
-  ${when(incremental(),`
-    WHERE DATE(updated_at_auto) >= DATE_SUB(CURRENT_DATE(), INTERVAL 5 DAY)
-  `)}
+    l.id AS lead_id, l.createdAt as Fecha_creacion, l.updated_at_auto, l.fullname, l.builderKey as Constructora,
+    l.identification, l.gender, l.venta_efectiva, l.createdEmail, l.qualification AS calificacion_sugerida,
+    l.propertyDelivery AS fecha_entrega_proyecto, l.financeValue AS valor_a_financiar, l.projectCity as ciudad_proyecto,
+    l.projectName AS nombre_proyecto, l.propertyType AS tipo_vivienda, l.propertyValue as valor_vivienda,
+    l.preselectaScore AS score, l.preselectaDecision, l.preselectaStatus, l.sarlaftStatus, l.identificationStatus,
+    l.housingLawIndicator, l.idFamilyGroup,
+    s.scoring, s.score_date,
+    SAFE_CAST(JSON_EXTRACT_SCALAR(s.original_response, '$.summary.INGRESO_FINAL') AS FLOAT64) AS INGRESO_FINAL,
+    SAFE_CAST(JSON_EXTRACT_SCALAR(s.original_response, '$.summary.CUOTAS_TITULAR') AS FLOAT64) AS CUOTAS_TITULAR,
+    SAFE_DIVIDE(SAFE_CAST(JSON_EXTRACT_SCALAR(s.original_response, '$.summary.CUOTAS_TITULAR') AS FLOAT64), SAFE_CAST(JSON_EXTRACT_SCALAR(s.original_response, '$.summary.INGRESO_FINAL') AS FLOAT64)) AS ENDEUDAMIENTO,
+    CASE WHEN JSON_EXTRACT_SCALAR(s.original_response, '$.summary.OCUPACION') = '1' THEN 'EMPLEADO' WHEN JSON_EXTRACT_SCALAR(s.original_response, '$.summary.OCUPACION') = '2' THEN 'INDEPENDIENTE' WHEN JSON_EXTRACT_SCALAR(s.original_response, '$.summary.OCUPACION') = '3' THEN 'PENSIONADO' ELSE 'SIN ACTIVIDAD ECONOMICA' END AS ocupacion,
+    CASE WHEN l.idFamilyGroup IS NULL OR l.idFamilyGroup = 0 THEN 'TITULAR' WHEN fam.principalIdLead = l.id THEN 'TITULAR' WHEN fam.principalIdLead IS NOT NULL THEN 'CODEUDOR' ELSE 'TITULAR' END AS rol,
+    IF(ROW_NUMBER() OVER(PARTITION BY l.identification ORDER BY IF(l.idFamilyGroup IS NOT NULL, 1, 0) DESC, l.createdAt DESC) = 1, 1, 0) AS es_intento_principal
+  FROM ${ref("tbl_sq_leads")} l
+  LEFT JOIN ${ref("tbl_sq_score_validity")} s ON l.idScoreValidity = s.id
+  LEFT JOIN ${ref("tbl_sq_familiar_groups")} fam ON l.idFamilyGroup = fam.id
+  ${when(incremental(), `WHERE DATE(l.updated_at_auto) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)`)}
 ),
 
--- 2. Staging de la Calculadora Individual (PROTECCIÓN: Solo 1 fila por lead)
+-- 2. STAGING CALCULADORA INDIVIDUAL
 stg_calculator AS (
   SELECT
-    id_lead, rango_salarios, rango_endeudamiento, rango_score, rango_credito_max_pesos_15,
-    rango_credito_max_uvr_15, rango_credito_max_pesos_20, rango_credito_max_uvr_20,
-    rango_credito_max_uvr_30, valor_credito, valor_credito_pesos_20_anios,
-    valor_credito_uvr_20_anios, valor_credito_uvr_30_anios, credito_maximo_segun_disponible_pesos,
-    credito_maximo_segun_disponible_uvr, endeudamiento
-  FROM ${ref("firestore_calculator", "Calculator_table")}
-  QUALIFY ROW_NUMBER() OVER(PARTITION BY id_lead ORDER BY timestamp_registro DESC) = 1
+    id_lead, document_id, valor_credito, ingresos_estimados, 
+    credito_maximo_segun_disponible_COP AS credito_max_disp_pesos,
+    credito_maximo_segun_disponible_UVR AS credito_max_disp_uvr,
+    MaximoPrestamo_COP_20_mediana AS pres_max_pesos_20_anios,
+    MaximoPrestamo_UVR_20_mediana AS pres_max_uvr_20_anios,
+    MaximoPrestamo_UVR_30_mediana AS pres_max_uvr_30_anios
+  FROM ${ref("tbl_calculator_master_v2")}
+  QUALIFY ROW_NUMBER() OVER(PARTITION BY id_lead ORDER BY timestamp DESC) = 1
 ),
 
--- 3. Staging de la Calculadora Familiar (PROTECCIÓN: Solo 1 fila por Grupo Familiar)
+-- 3. STAGING CALCULADORA FAMILIAR (NOMBRES CORREGIDOS)
 stg_calculator_fam AS (
   SELECT
-    idFamilyGroup,
-    document_id, rango_salarios, rango_endeudamiento, rango_score, rango_credito_max_pesos_15,
-    rango_credito_max_uvr_15, rango_credito_max_pesos_20, rango_credito_max_uvr_20,
-    rango_credito_max_uvr_30, valor_credito, valor_credito_pesos_20_anios,
-    valor_credito_uvr_20_anios, valor_credito_uvr_30_anios, credito_maximo_segun_disponible_pesos,
-    credito_maximo_segun_disponible_uvr, calificacion, koggi_profiling, indicador_ley_vivienda, 
-    ingresos, maximo_cuota_ley_vivienda, cuotas_titular, gastos_familiares
-  FROM ${ref("src_calculator_fam")} 
+    idFamilyGroup, document_id, valor_credito, ingresos, cuotas_titular, gastos_familiares,
+    calificacion, koggi_profiling, indicador_ley_vivienda,
+    credito_max_disp_pesos, credito_max_disp_uvr,
+    pres_max_pesos_20_anios, pres_max_uvr_20_anios, pres_max_uvr_30_anios,
+    safe_cast((ingresos * 0.3) as INT64) AS maximo_cuota_ley_vivienda 
+  FROM ${ref("tbl_family_calculator_master")} 
   WHERE idFamilyGroup IS NOT NULL
-  QUALIFY ROW_NUMBER() OVER(PARTITION BY idFamilyGroup ORDER BY timestamp_registro DESC) = 1
+  QUALIFY ROW_NUMBER() OVER(PARTITION BY idFamilyGroup ORDER BY timestamp DESC) = 1
 ),
 
--- 4. Usuarios y Grupos Consolidados (Optimizado)
+-- 4. USUARIOS (RECUPERADO)
 grupos_usuarios AS (
   SELECT u.email, u.entity_key, u.name AS usuario_nombre, g.name AS tipo_usuario, g.observation as observacion
   FROM ${ref("tbl_user")} u
@@ -93,71 +68,70 @@ grupos_usuarios AS (
   QUALIFY ROW_NUMBER() OVER(PARTITION BY email, entity_key ORDER BY u.id) = 1
 ),
 
--- 5. Ensamble Final
 quick_win_source_data AS (
   SELECT
-    p.lead_id, p.identification, p.Fecha_creacion, p.createdEmail, p.fullname, 
-    age.edad_promedio, p.gender, p.rol, p.ocupacion, 
+    -- BASE LEADS (Excluyendo explícitamente updated_at_auto)
+    p.lead_id, p.Fecha_creacion, p.fullname, p.Constructora, p.identification, p.gender, 
+    p.venta_efectiva, p.createdEmail, p.calificacion_sugerida, p.fecha_entrega_proyecto, 
+    p.valor_a_financiar, p.ciudad_proyecto, p.nombre_proyecto, p.tipo_vivienda, 
+    p.valor_vivienda, p.score, p.preselectaDecision, p.preselectaStatus, p.sarlaftStatus, 
+    p.identificationStatus, p.housingLawIndicator, p.idFamilyGroup, p.scoring, p.score_date, 
+    p.INGRESO_FINAL, p.CUOTAS_TITULAR, p.ENDEUDAMIENTO, p.ocupacion, p.rol, p.es_intento_principal,
+    
+    -- CRUCES RECUPERADOS
+    age.edad_promedio,
     usr.usuario_nombre, usr.tipo_usuario, usr.observacion,
-    p.idFamilyGroup, p.Constructora, p.nombre_proyecto, p.ciudad_proyecto, p.tipo_vivienda,
-    p.valor_vivienda, p.fecha_entrega_proyecto, p.score, p.scoring,
-    p.score_date, p.preselectaDecision, p.preselectaStatus,
-    p.INGRESO_FINAL, p.ENDEUDAMIENTO, p.sarlaftStatus, 
-    p.identificationStatus, p.venta_efectiva, p.valor_a_financiar,
     
-    p.es_intento_principal,
-    
-    p.document_id,
-    cfam.document_id AS fam_document_id, 
-    p.calificacion_sugerida,
+    -- CALCULADORA INDIVIDUAL (Renombrado exacto a Legacy)
+    c.document_id,
+    c.ingresos_estimados AS ingresos,
+    c.valor_credito,
+    c.credito_max_disp_pesos AS credito_maximo_segun_disponible_pesos,
+    c.credito_max_disp_uvr AS credito_maximo_segun_disponible_uvr,
+    c.pres_max_pesos_20_anios AS valor_credito_pesos_20_anios,
+    c.pres_max_uvr_20_anios AS valor_credito_uvr_20_anios,
+    c.pres_max_uvr_30_anios AS valor_credito_uvr_30_anios,
+
+    -- CALCULADORA FAMILIAR (Renombrado exacto a Legacy)
+    cfam.document_id AS fam_document_id,
     COALESCE(cfam.calificacion, 'Sin Información') as fam_calificacion,
-    p.housingLawIndicator,
     COALESCE(cfam.indicador_ley_vivienda, 'Sin Información') as fam_indicador_ley_vivienda,
-    p.ingresos,
-    cfam.ingresos AS fam_ingresos,         
-    p.CUOTAS_TITULAR,
+    cfam.ingresos AS fam_ingresos,
     cfam.cuotas_titular AS fam_cuotas_titular,
-
-    COALESCE(c.rango_salarios, 'Sin Información') AS rango_salarios,
-    COALESCE(cfam.rango_salarios, 'Sin Información') as fam_rango_salarios,        
-    COALESCE(c.rango_endeudamiento, 'Sin Información') AS rango_endeudamiento,
-    COALESCE(cfam.rango_endeudamiento, 'Sin Información') as fam_rango_endeudamiento,          
-    COALESCE(c.rango_score, 'Sin Información') AS rango_score,
-    COALESCE(cfam.rango_score, 'Sin Información') as fam_rango_score,
-
-    COALESCE(c.rango_credito_max_pesos_15, 'Sin Información') AS rango_credito_max_pesos_15,
-    COALESCE(cfam.rango_credito_max_pesos_15, 'Sin Información') as fam_rango_credito_max_pesos_15,
-    COALESCE(c.rango_credito_max_uvr_15, 'Sin Información') AS rango_credito_max_uvr_15,
-    COALESCE(cfam.rango_credito_max_uvr_15, 'Sin Información') AS fam_rango_credito_max_uvr_15,
-    COALESCE(c.rango_credito_max_pesos_20, 'Sin Información') AS rango_credito_max_pesos_20,
-    COALESCE(cfam.rango_credito_max_pesos_20, 'Sin Información') AS fam_rango_credito_max_pesos_20,
-    COALESCE(c.rango_credito_max_uvr_20, 'Sin Información') AS rango_credito_max_uvr_20,
-    COALESCE(cfam.rango_credito_max_uvr_20, 'Sin Información') AS fam_rango_credito_max_uvr_20,
-    COALESCE(c.rango_credito_max_uvr_30, 'Sin Información') AS rango_credito_max_uvr_30,
-    COALESCE(cfam.rango_credito_max_uvr_30, 'Sin Información') AS fam_rango_credito_max_uvr_30,
-
-    c.valor_credito, 
-    cfam.valor_credito AS fam_valor_credito, 
-    c.valor_credito_pesos_20_anios, 
-    cfam.valor_credito_pesos_20_anios AS fam_valor_credito_pesos_20_anios,
-    c.valor_credito_uvr_20_anios,
-    cfam.valor_credito_uvr_20_anios AS fam_valor_credito_uvr_20_anios, 
-    c.valor_credito_uvr_30_anios, 
-    cfam.valor_credito_uvr_30_anios AS fam_valor_credito_uvr_30_anios, 
-    c.credito_maximo_segun_disponible_pesos,
-    cfam.credito_maximo_segun_disponible_pesos AS fam_cred_max_segun_disp_pesos, 
-    c.credito_maximo_segun_disponible_uvr,
-    cfam.credito_maximo_segun_disponible_uvr AS fam_cred_max_segun_disp_uvr, 
-
-    COALESCE(cfam.koggi_profiling, 'Sin Información') as fam_koggi_profiling,
     cfam.gastos_familiares AS fam_gastos_familiares,
     cfam.maximo_cuota_ley_vivienda AS fam_maximo_cuota_ley_vivienda,
-    
+    cfam.valor_credito AS fam_valor_credito,
+    cfam.credito_max_disp_pesos AS fam_cred_max_segun_disp_pesos,
+    cfam.credito_max_disp_uvr AS fam_cred_max_segun_disp_uvr,
+    cfam.pres_max_pesos_20_anios AS fam_valor_credito_pesos_20_anios,
+    cfam.pres_max_uvr_20_anios AS fam_valor_credito_uvr_20_anios,
+    cfam.pres_max_uvr_30_anios AS fam_valor_credito_uvr_30_anios,
+    COALESCE(cfam.koggi_profiling, 'Sin Información') as fam_koggi_profiling,
+
+    -- RANGOS INDIVIDUALES RECUPERADOS
+    COALESCE(CASE WHEN c.ingresos_estimados <= 2800000 THEN '1 a 2 SMMLV' WHEN c.ingresos_estimados <= 5600000 THEN '2 a 4 SMMLV' ELSE 'Más de 4 SMMLV' END, 'Sin Información') AS rango_salarios,
+    COALESCE(CASE WHEN p.ENDEUDAMIENTO <= 0.3 THEN '≤ 30%' WHEN p.ENDEUDAMIENTO <= 0.6 THEN '31% a 60%' WHEN p.ENDEUDAMIENTO > 0.6 THEN '≥ 61%' ELSE NULL END, 'Sin Información') AS rango_endeudamiento,
+    COALESCE(CASE WHEN p.score <= 500 THEN '≤ 500' WHEN p.score BETWEEN 501 AND 650 THEN '≥ 501 y < 650' WHEN p.score >= 651 THEN '≥ 651' ELSE NULL END, 'Sin Información') AS rango_score,
+    COALESCE(CASE WHEN SAFE_DIVIDE(c.credito_max_disp_pesos, c.valor_credito) <= 0.7 THEN '≤ 70%' WHEN SAFE_DIVIDE(c.credito_max_disp_pesos, c.valor_credito) < 0.95 THEN '70% a 95%' WHEN SAFE_DIVIDE(c.credito_max_disp_pesos, c.valor_credito) >= 0.95 THEN '≥ 95%' ELSE NULL END, 'Sin Información') AS rango_credito_max_pesos_15,
+    COALESCE(CASE WHEN SAFE_DIVIDE(c.credito_max_disp_uvr, c.valor_credito) <= 0.7 THEN '≤ 70%' WHEN SAFE_DIVIDE(c.credito_max_disp_uvr, c.valor_credito) < 0.95 THEN '70% a 95%' WHEN SAFE_DIVIDE(c.credito_max_disp_uvr, c.valor_credito) >= 0.95 THEN '≥ 95%' ELSE NULL END, 'Sin Información') AS rango_credito_max_uvr_15,
+    COALESCE(CASE WHEN SAFE_DIVIDE(COALESCE(c.pres_max_pesos_20_anios, c.credito_max_disp_pesos), c.valor_credito) <= 0.7 THEN '≤ 70%' WHEN SAFE_DIVIDE(COALESCE(c.pres_max_pesos_20_anios, c.credito_max_disp_pesos), c.valor_credito) < 0.95 THEN '70% a 95%' WHEN SAFE_DIVIDE(COALESCE(c.pres_max_pesos_20_anios, c.credito_max_disp_pesos), c.valor_credito) >= 0.95 THEN '≥ 95%' ELSE NULL END, 'Sin Información') AS rango_credito_max_pesos_20,
+    COALESCE(CASE WHEN SAFE_DIVIDE(COALESCE(c.pres_max_uvr_20_anios, c.credito_max_disp_uvr), c.valor_credito) <= 0.7 THEN '≤ 70%' WHEN SAFE_DIVIDE(COALESCE(c.pres_max_uvr_20_anios, c.credito_max_disp_uvr), c.valor_credito) < 0.95 THEN '70% a 95%' WHEN SAFE_DIVIDE(COALESCE(c.pres_max_uvr_20_anios, c.credito_max_disp_uvr), c.valor_credito) >= 0.95 THEN '≥ 95%' ELSE NULL END, 'Sin Información') AS rango_credito_max_uvr_20,
+    COALESCE(CASE WHEN SAFE_DIVIDE(COALESCE(c.pres_max_uvr_30_anios, c.credito_max_disp_uvr), c.valor_credito) <= 0.7 THEN '≤ 70%' WHEN SAFE_DIVIDE(COALESCE(c.pres_max_uvr_30_anios, c.credito_max_disp_uvr), c.valor_credito) < 0.95 THEN '70% a 95%' WHEN SAFE_DIVIDE(COALESCE(c.pres_max_uvr_30_anios, c.credito_max_disp_uvr), c.valor_credito) >= 0.95 THEN '≥ 95%' ELSE NULL END, 'Sin Información') AS rango_credito_max_uvr_30,
+
+    -- RANGOS FAMILIARES RECUPERADOS
+    COALESCE(CASE WHEN cfam.ingresos <= 2800000 THEN '1 a 2 SMMLV' WHEN cfam.ingresos <= 5600000 THEN '2 a 4 SMMLV' ELSE 'Más de 4 SMMLV' END, 'Sin Información') AS fam_rango_salarios,
+    COALESCE(CASE WHEN SAFE_DIVIDE(cfam.cuotas_titular, cfam.ingresos) <= 0.3 THEN '≤ 30%' WHEN SAFE_DIVIDE(cfam.cuotas_titular, cfam.ingresos) <= 0.6 THEN '31% a 60%' WHEN SAFE_DIVIDE(cfam.cuotas_titular, cfam.ingresos) > 0.6 THEN '≥ 61%' ELSE NULL END, 'Sin Información') AS fam_rango_endeudamiento,
+    'Sin Información' AS fam_rango_score,
+    COALESCE(CASE WHEN SAFE_DIVIDE(cfam.credito_max_disp_pesos, cfam.valor_credito) <= 0.7 THEN '≤ 70%' WHEN SAFE_DIVIDE(cfam.credito_max_disp_pesos, cfam.valor_credito) < 0.95 THEN '70% a 95%' WHEN SAFE_DIVIDE(cfam.credito_max_disp_pesos, cfam.valor_credito) >= 0.95 THEN '≥ 95%' ELSE NULL END, 'Sin Información') AS fam_rango_credito_max_pesos_15,
+    COALESCE(CASE WHEN SAFE_DIVIDE(cfam.credito_max_disp_uvr, cfam.valor_credito) <= 0.7 THEN '≤ 70%' WHEN SAFE_DIVIDE(cfam.credito_max_disp_uvr, cfam.valor_credito) < 0.95 THEN '70% a 95%' WHEN SAFE_DIVIDE(cfam.credito_max_disp_uvr, cfam.valor_credito) >= 0.95 THEN '≥ 95%' ELSE NULL END, 'Sin Información') AS fam_rango_credito_max_uvr_15,
+    COALESCE(CASE WHEN SAFE_DIVIDE(COALESCE(cfam.pres_max_pesos_20_anios, cfam.credito_max_disp_pesos), cfam.valor_credito) <= 0.7 THEN '≤ 70%' WHEN SAFE_DIVIDE(COALESCE(cfam.pres_max_pesos_20_anios, cfam.credito_max_disp_pesos), cfam.valor_credito) < 0.95 THEN '70% a 95%' WHEN SAFE_DIVIDE(COALESCE(cfam.pres_max_pesos_20_anios, cfam.credito_max_disp_pesos), cfam.valor_credito) >= 0.95 THEN '≥ 95%' ELSE NULL END, 'Sin Información') AS fam_rango_credito_max_pesos_20,
+    COALESCE(CASE WHEN SAFE_DIVIDE(COALESCE(cfam.pres_max_uvr_20_anios, cfam.credito_max_disp_uvr), cfam.valor_credito) <= 0.7 THEN '≤ 70%' WHEN SAFE_DIVIDE(COALESCE(cfam.pres_max_uvr_20_anios, cfam.credito_max_disp_uvr), cfam.valor_credito) < 0.95 THEN '70% a 95%' WHEN SAFE_DIVIDE(COALESCE(cfam.pres_max_uvr_20_anios, cfam.credito_max_disp_uvr), cfam.valor_credito) >= 0.95 THEN '≥ 95%' ELSE NULL END, 'Sin Información') AS fam_rango_credito_max_uvr_20,
+    COALESCE(CASE WHEN SAFE_DIVIDE(COALESCE(cfam.pres_max_uvr_30_anios, cfam.credito_max_disp_uvr), cfam.valor_credito) <= 0.7 THEN '≤ 70%' WHEN SAFE_DIVIDE(COALESCE(cfam.pres_max_uvr_30_anios, cfam.credito_max_disp_uvr), cfam.valor_credito) < 0.95 THEN '70% a 95%' WHEN SAFE_DIVIDE(COALESCE(cfam.pres_max_uvr_30_anios, cfam.credito_max_disp_uvr), cfam.valor_credito) >= 0.95 THEN '≥ 95%' ELSE NULL END, 'Sin Información') AS fam_rango_credito_max_uvr_30,
+
     look.uid_entity AS uid_looker,
-    
     IF(p.idFamilyGroup IS NOT NULL, 'GRUPO FAMILIAR', 'ÚNICO COMPRADOR') AS unidades_vivienda
 
-  FROM stg_profiling AS p
+  FROM stg_reconstructed_leads AS p
   LEFT JOIN ${ref("stg_hdc_parsed_age")} AS age ON p.identification = age.identificacion
   LEFT JOIN stg_calculator AS c ON p.lead_id = c.id_lead
   LEFT JOIN stg_calculator_fam as cfam ON p.idFamilyGroup = cfam.idFamilyGroup
@@ -166,10 +140,9 @@ quick_win_source_data AS (
   LEFT JOIN ${ref("tbl_looker_board")} AS look ON ent.id_entity_database = look.entity_id
 )
 
--- 6. Selección Final con protección contra duplicados en el MERGE
-SELECT
+SELECT 
   t.*,
   TO_HEX(MD5(TO_JSON_STRING(t))) AS fila_hash,
   CURRENT_DATETIME('America/Bogota') AS fecha_ultima_actualizacion_bi
-FROM quick_win_source_data AS t
+FROM quick_win_source_data t
 QUALIFY ROW_NUMBER() OVER(PARTITION BY lead_id ORDER BY Fecha_creacion DESC) = 1
