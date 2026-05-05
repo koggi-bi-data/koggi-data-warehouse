@@ -37,6 +37,11 @@ SELECT
     SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.edad_aproximada") AS INT64) AS edad_aproximada,
     JSON_EXTRACT_SCALAR(data, "$.indicador_edad") AS indicador_edad,
     SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.idFamilyGroup") AS INT64) AS idFamilyGroup,
+    COALESCE(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.followUp") AS BOOL), FALSE) AS es_followup_origen,
+    CASE
+        WHEN COALESCE(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.followUp") AS BOOL), FALSE) IS TRUE THEN 'FOLLOW UP'
+        ELSE 'PROFILING'
+    END AS tipo_registro_origen,
 
     ---------------------------------------------------------------------------
     -- 2. DATOS DEL PROYECTO Y CONSTRUCTORA (Raíz)
