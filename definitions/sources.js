@@ -145,6 +145,22 @@ declare({
   description: "Datos crudos JSON de la calculadora Lite provenientes de Firestore"
 });
 
+// 19. Usuarios (Asesores)
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "firestore_collections",
+  name: "CalculatorCol",
+  description: "Nueva Calculadora Proceso BURO LATAM"
+});
+
+// 20. Nueva Coleccion Familiar
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "firestore_collections",
+  name: "FamilyGroupCalculatorCol",
+  description: "Datos crudos JSON de la nueva calculadora familiar"
+});
+
 
 // --- NUEVO ENTORNO: STREAM (SHADOW TEST) ---
 
@@ -154,3 +170,4 @@ declare({
 //   name: "tbl_sq_leads",
 //   description: "Tabla de leads replicada vía stream (Shadow Test de validación contra central_col)"
 // });
+

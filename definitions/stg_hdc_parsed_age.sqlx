@@ -2,46 +2,78 @@ config {
     type: "table",
     schema: "BI",
     name: "stg_hdc_parsed_age",
-    description: "Tabla que extrae la edad más reciente por usuario.",
+    description: "Capa Silver: Consolidado de Edad (HDC Nuevo, HDC Viejo y Calculadora V2).",
     assertions: {
         uniqueKey: ["identificacion"]
     }
 }
 
-WITH RankedHdc AS (
+WITH 
+---------------------------------------------------------------------------
+-- 1. EXTRACCIÓN DE HDC (Soporta JSON Viejo y Nuevo)
+---------------------------------------------------------------------------
+hdc_raw AS (
     SELECT
-        user_identification_number AS identificacion,
-        original_response,
-        -- Orden por fecha descendente para que el registro más nuevo sea el número 1
-        ROW_NUMBER() OVER(PARTITION BY user_identification_number ORDER BY hdc_date DESC) as rn
-    FROM
-        ${ref("tbl_sq_hdc_validity")}
-    WHERE
-        user_identification_number IS NOT NULL
+        CAST(user_identification_number AS STRING) AS identificacion,
+        
+        -- FORZAMOS A DATETIME PARA EVITAR EL CHOQUE EN EL UNION
+        SAFE_CAST(hdc_date AS DATETIME) AS fecha_referencia,
+        
+        'HDC_SERVICE' AS fuente,
+        JSON_EXTRACT_SCALAR(original_response, '$.basicInformation.data.ageAproximated') AS age_str_new,
+        JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.min') AS age_min_old,
+        JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.max') AS age_max_old
+    FROM ${ref("tbl_sq_hdc_validity")}
+    WHERE user_identification_number IS NOT NULL
 ),
 
-ExtractedData AS (
-    SELECT 
+hdc_parsed AS (
+    SELECT
         identificacion,
-        -- Extraccion edad mínima del JSON de forma segura
+        fecha_referencia,
+        fuente,
         COALESCE(
-            SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.min') AS INT64),
-            SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.attributes.min') AS INT64)
+            SAFE_CAST(SPLIT(age_str_new, '-')[SAFE_OFFSET(0)] AS INT64), 
+            SAFE_CAST(age_min_old AS INT64)
         ) AS edad_min,
-        -- Extraccion edad máxima del JSON de forma segura
         COALESCE(
-            SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.max') AS INT64),
-            SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.NaturalNacional.Edad.attributes.max') AS INT64)
+            SAFE_CAST(SPLIT(age_str_new, '-')[SAFE_OFFSET(1)] AS INT64), 
+            SAFE_CAST(age_max_old AS INT64)
         ) AS edad_max
-    FROM RankedHdc
-    WHERE rn = 1 -- Filtro para quedarnos solo con el registro más reciente de cada identificacion
+    FROM hdc_raw
+),
+
+---------------------------------------------------------------------------
+-- 2. EXTRACCIÓN DE CALCULADORA V2
+---------------------------------------------------------------------------
+calc_parsed AS (
+    SELECT
+        CAST(identificacion AS STRING) AS identificacion,
+        
+        -- FORZAMOS A DATETIME PARA EVITAR EL CHOQUE EN EL UNION
+        SAFE_CAST(timestamp AS DATETIME) AS fecha_referencia,
+        
+        'CALCULATOR_V2' AS fuente,
+        SAFE_CAST(edad_aproximada AS INT64) AS edad_min,
+        SAFE_CAST(edad_aproximada AS INT64) AS edad_max
+    FROM ${ref("tbl_calculator_master_v2")}
+    WHERE identificacion IS NOT NULL 
+      AND edad_aproximada IS NOT NULL
+),
+
+---------------------------------------------------------------------------
+-- 3. UNIFICACIÓN Y RANKING POR RECIENCIA
+---------------------------------------------------------------------------
+unified_age AS (
+    SELECT * FROM hdc_parsed
+    UNION ALL
+    SELECT * FROM calc_parsed
 )
 
 SELECT
     identificacion,
-    edad_min, 
-    edad_max, 
-    -- Calcula el promedio y convertimos explícitamente a FLOAT64 (FLOAT)
+    edad_min,
+    edad_max,
     CAST(
         CASE 
             WHEN edad_min IS NOT NULL AND edad_max IS NOT NULL THEN (edad_min + edad_max) / 2
@@ -49,6 +81,9 @@ SELECT
             WHEN edad_max IS NOT NULL THEN edad_max
             ELSE NULL 
         END AS FLOAT64
-    ) AS edad_promedio
-FROM
-    ExtractedData
+    ) AS edad_promedio,
+    fuente AS fuente_ultimo_dato,
+    fecha_referencia AS fecha_ultima_actualizacion
+FROM unified_age
+-- Nos quedamos con el registro más reciente
+QUALIFY ROW_NUMBER() OVER(PARTITION BY identificacion ORDER BY fecha_referencia DESC) = 1

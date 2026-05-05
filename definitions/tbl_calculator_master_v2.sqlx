@@ -1,0 +1,55 @@
+config {
+    type: "incremental",
+    schema: "BI",
+    name: "tbl_calculator_master_v2",
+    tags: ["diario"],
+    uniqueKey: ["document_id"],
+    description: "Capa Silver V2 (Unificada). Incluye deduplicación defensiva priorizando V2 Current sobre V1 Legacy.",
+    bigquery: {
+        partitionBy: "DATE(timestamp)",
+        clusterBy: ["uid_looker", "identificacion", "id_lead", "constructora"]
+    }
+}
+
+WITH union_stagings AS (
+    -- 1. Unificamos ambos stagings (que ya vienen con esquema fijo de 150+ columnas)
+    SELECT * FROM ${ref("stg_calculator_v1_legacy")}
+    UNION ALL
+    SELECT * FROM ${ref("stg_calculator_v2_current")}
+),
+
+deduped_stagings AS (
+    -- 2. ESCUDO DE SEGURIDAD: Si un document_id existe en ambos mundos por error de TI,
+    -- priorizamos la data de 'v2_current' sobre 'v1_legacy'.
+    SELECT *
+    FROM union_stagings
+    QUALIFY ROW_NUMBER() OVER(
+        PARTITION BY document_id 
+        ORDER BY 
+            CASE WHEN version_esquema = 'v2_current' THEN 1 ELSE 2 END ASC,
+            timestamp DESC
+    ) = 1
+)
+
+SELECT
+    u.*,
+    -- Campos de apoyo para reportería y auditoría
+    DATE(u.timestamp) AS fecha_registro,
+    CURRENT_DATETIME('America/Bogota') as fecha_ultima_actualizacion,
+    
+    -- Cruce de Seguridad y Atribución (Metadata de central_col_stream)
+    look.uid_entity AS uid_looker
+
+FROM deduped_stagings u
+-- Usamos las referencias declaradas en sources para mantener el linaje
+LEFT JOIN ${ref("tbl_entity_database")} ent 
+  ON u.constructora = ent.key
+LEFT JOIN ${ref("tbl_looker_board")} look 
+  ON ent.id_entity_database = look.entity_id
+
+-- Filtros de integridad heredados
+WHERE u.identificacion IS NOT NULL
+  AND look.uid_entity IS NOT NULL
+  
+  -- Lógica Incremental: Solo procesa registros más nuevos que el último cargado
+  ${when(incremental(), `AND u.timestamp > (SELECT MAX(timestamp) FROM ${self()})`)}
