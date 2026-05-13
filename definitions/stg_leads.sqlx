@@ -1,0 +1,80 @@
+config {
+    type: "incremental",
+    schema: "BI",
+    name: "stg_leads",
+    description: "Capa Silver: Staging de Leads. Limpieza, estandarización y casteo de tipos. Fuente principal de datos demográficos y de proyecto.",
+    uniqueKey: ["id_lead"],
+    tags: ["staging", "diario"],
+    bigquery: {
+        partitionBy: "createdAt",
+        clusterBy: ["identification", "builderKey"]
+    },
+    assertions: {
+        nonNull: ["id_lead"]
+    }
+}
+
+WITH raw_leads AS (
+  SELECT * 
+  FROM ${ref("tbl_sq_leads")}
+  ${when(incremental(), `WHERE DATETIME(CAST(updated_at_auto AS TIMESTAMP), "America/Bogota") > (SELECT MAX(updated_at_auto) FROM ${self()})`)}
+)
+
+SELECT
+  -- 1. LLAVES
+  SAFE_CAST(id AS STRING) AS id_lead,
+  idFamilyGroup,
+  SAFE_CAST(idScoreValidity AS STRING) AS idScoreValidity,
+  SAFE_CAST(idHdc AS STRING) AS idHdc,
+  SAFE_CAST(idProject AS STRING) AS idProject,
+  SAFE_CAST(isMpkLead AS STRING) AS isMpkLead,
+
+  -- 2. FECHAS Y TIEMPOS (America/Bogota)
+  DATE(CAST(createdAt AS TIMESTAMP), "America/Bogota") AS createdAt,
+  DATETIME(CAST(updated_at_auto AS TIMESTAMP), "America/Bogota") AS updated_at_auto,
+  DATE(CAST(propertyDelivery AS TIMESTAMP), "America/Bogota") AS propertyDelivery,
+  DATE(CAST(expeditionDate AS TIMESTAMP), "America/Bogota") AS expeditionDate,
+  DATE(CAST(followUpDate AS TIMESTAMP), "America/Bogota") AS followUpDate,
+
+  -- 3. DATOS DE USUARIO Y CONTACTO
+  SAFE_CAST(identification AS STRING) AS identification,
+  UPPER(TRIM(identificationType)) AS identificationType,
+  UPPER(TRIM(fullName)) AS fullName,
+  LOWER(TRIM(createdEmail)) AS createdEmail,
+  LOWER(TRIM(email)) AS email,
+  SAFE_CAST(phone AS STRING) AS phone,
+  SAFE_CAST(dependents AS INT64) AS dependents,
+
+  -- 4. DATOS DEL PROYECTO
+  UPPER(TRIM(builderKey)) AS builderKey,
+  UPPER(TRIM(projectName)) AS projectName,
+  UPPER(TRIM(projectCity)) AS projectCity,
+  UPPER(TRIM(propertyType)) AS propertyType,
+  SAFE_CAST(projectBankNIT AS STRING) AS projectBankNIT,
+
+  -- 5. VARIABLES FINANCIERAS
+  SAFE_CAST(financeValue AS INT64) AS financeValue,
+  SAFE_CAST(propertyValue AS INT64) AS propertyValue,
+  SAFE_CAST(preselectaScore AS INT64) AS preselectaScore,
+  SAFE_CAST(monthlyQuota AS INT64) AS monthlyQuota,
+  SAFE_CAST(updatedIncome AS INT64) AS updatedIncome,
+
+  -- 6. ESTADOS Y CATEGORÍAS
+  SAFE_CAST(venta_efectiva AS INT64) AS venta_efectiva,
+  UPPER(TRIM(qualification)) AS qualification,
+  UPPER(TRIM(preselectaDecision)) AS preselectaDecision,
+  UPPER(TRIM(preselectaStatus)) AS preselectaStatus,
+  UPPER(TRIM(sarlaftStatus)) AS sarlaftStatus,
+  UPPER(TRIM(identificationStatus)) AS identificationStatus,
+  UPPER(TRIM(housingLawIndicator)) AS housingLawIndicator,
+  UPPER(TRIM(HDCStatus)) AS HDCStatus,
+  SAFE_CAST(followUpCounter AS INT64) AS followUpCounter,
+  SAFE_CAST(followUpActivated AS INT64) AS followUpActivated,
+  
+  -- 7. METADATA DE SISTEMA
+  SAFE_CAST(is_not_recent AS INT64) AS is_not_recent,
+
+  -- 8. FECHA ACTUALIZACIÓN BI
+  CURRENT_DATETIME('America/Bogota') AS datetime_act_BI
+
+FROM raw_leads
