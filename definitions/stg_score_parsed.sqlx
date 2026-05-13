@@ -2,18 +2,22 @@ config {
     type: "incremental",
     schema: "BI_Staging",
     name: "stg_score_parsed",
-    description: "Capa Curada de Score. Normaliza financieras, demografía, extrae array de causales y categoriza.",
+    description: "Capa Curada de Score. Normaliza financieras, demografía, extrae array de causales, categoriza y calcula endeudamiento.",
     tags: ["staging", "score", "diario"],
     uniqueKey: ["id_score"],
     bigquery: {
         partitionBy: "DATE(fecha_registro_score)",
         clusterBy: ["id_score", "actividad_economica"]
+    },
+    assertions: {
+        nonNull: ["id_score"]
     }
 }
 
 WITH base_parsed AS (
   SELECT
       id AS id_score,
+      SAFE_CAST(identification_number AS STRING) AS identificacion,
       
       -- 1. FECHAS (Hora Colombia)
       COALESCE(
@@ -24,7 +28,7 @@ WITH base_parsed AS (
       CAST(score_date_end AS DATE) AS fecha_fin_score,     
       scoring,
       
-      -- 2. DATOS FINANCIEROS (Corrección: 'summary' con una m)
+      -- 2. DATOS FINANCIEROS
       SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.summary.VALOR_INGRESO_FINAL') AS FLOAT64) AS valor_ingreso_final,
       SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.summary.CUOTAS_TITULAR') AS FLOAT64) AS cuotas_titular,
       SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.summary.VALOR_INGRESO_2') AS FLOAT64) AS valor_ingreso_2,
@@ -32,7 +36,7 @@ WITH base_parsed AS (
       SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.summary.QUANTO3_MEDIO') AS FLOAT64) AS quanto3,
       SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.summary.INGRESOS_TOTALES_ULTIMO_MES') AS FLOAT64) AS ingresos_totales_ultimo_mes,
       
-      -- ACTIVIDAD ECONOMICA (Corrección: 'summary')
+      -- ACTIVIDAD ECONOMICA
       CASE
         WHEN JSON_EXTRACT_SCALAR(original_response, '$.summary.OCUPACION') = '1' THEN 'EMPLEADO'
         WHEN JSON_EXTRACT_SCALAR(original_response, '$.summary.OCUPACION') = '2' THEN 'INDEPENDIENTE'
@@ -46,7 +50,6 @@ WITH base_parsed AS (
         SAFE_CAST(JSON_EXTRACT_SCALAR(original_response, '$.nationalPerson.age.max') AS INT64)
       ) / 2 AS edad_promedio_estimada,
 
-      -- Rango Texto: Min - Max (Corrección: antes tenías Min - Min)
       CONCAT(
         JSON_EXTRACT_SCALAR(original_response, '$.nationalPerson.age.min'), 
         ' - ', 
@@ -58,40 +61,38 @@ WITH base_parsed AS (
       ARRAY(
         SELECT DISTINCT UPPER(TRIM(valor))
         FROM UNNEST([
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_1'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_2'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_3'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_4'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_5'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_6'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_7'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_8'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_9'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_10'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_11'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_12'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_13'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_14'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_15'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_16'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_17'),
-          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_18'),
+          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_1'), JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_2'),
+          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_3'), JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_4'),
+          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_5'), JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_6'),
+          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_7'), JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_8'),
+          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_9'), JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_10'),
+          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_11'), JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_12'),
+          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_13'), JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_14'),
+          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_15'), JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_16'),
+          JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_17'), JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_18'),
           JSON_EXTRACT_SCALAR(causales, '$.CAUSAL_19')
         ]) AS valor
         WHERE valor IS NOT NULL AND valor != 'NA' AND valor != ''
-      ) AS lista_causales
+      ) AS lista_causales,
+      
+      updated_at_auto
 
   FROM
       ${ref("tbl_sq_score_validity")}
 
-  -- LOGICA INCREMENTAL
-  ${when(incremental(), `WHERE DATETIME(CAST(score_date AS TIMESTAMP), "America/Bogota") > (SELECT MAX(fecha_registro_score) FROM ${self()})`)}
+  -- LOGICA INCREMENTAL CORREGIDA (SCD Tipo 1)
+  ${when(incremental(), `WHERE DATETIME(CAST(updated_at_auto AS TIMESTAMP), "America/Bogota") > (SELECT MAX(fecha_actualizacion_etl) FROM ${self()})`)}
 )
 
 SELECT
     *,
     
-    -- 5. CATEGORIZACIÓN JERÁRQUICA
+    -- 5. MÉTRICAS CALCULADAS PARA CAPA GOLD
+    SAFE_DIVIDE(cuotas_titular, ingreso_final) AS endeudamiento,
+    ARRAY_TO_STRING(lista_causales, ' | ') AS causales_concatenadas,
+    ARRAY_LENGTH(lista_causales) AS total_causales,
+
+    -- 6. CATEGORIZACIÓN JERÁRQUICA
     CASE 
       WHEN EXISTS(SELECT 1 FROM UNNEST(lista_causales) c WHERE c LIKE '%FALLECIDO%' OR c LIKE '%ID%NO%REGISTRA%') THEN 'INCONSISTENCIA DE DATOS / LEGAL'
       WHEN EXISTS(SELECT 1 FROM UNNEST(lista_causales) c WHERE c LIKE '%MORA%90%' OR c LIKE '%VIGENTE%') THEN 'MORA GRAVE / VIGENTE'
@@ -109,7 +110,7 @@ SELECT
     EXISTS(SELECT 1 FROM UNNEST(lista_causales) c WHERE c LIKE '%MORA%') as flag_mora_general,
     EXISTS(SELECT 1 FROM UNNEST(lista_causales) c WHERE c LIKE '%SIN VIDA%' OR c LIKE '%SOLO%DEBITO%') as flag_sin_experiencia,
 
-    -- 6. AUDITORÍA (Hora Colombia)
+    -- 7. AUDITORÍA (Hora Colombia)
     DATETIME(CURRENT_TIMESTAMP(), "America/Bogota") as fecha_actualizacion_etl
 
 FROM base_parsed

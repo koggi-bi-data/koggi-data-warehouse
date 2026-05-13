@@ -1,0 +1,44 @@
+config {
+    type: "incremental",
+    schema: "BI",
+    name: "stg_hdc_parsed",
+    description: "Capa Silver: Staging de HDC. Extracción plana del nodo summary. Granularidad 1:1 estricta para cruce seguro con OBT.",
+    uniqueKey: ["id_hdc"],
+    tags: ["staging", "diario"],
+    bigquery: {
+        partitionBy: "DATE(fecha_consulta_hdc)",
+        clusterBy: ["identificacion"]
+    },
+    assertions: {
+        nonNull: ["id_hdc"]
+    }
+}
+
+WITH raw_hdc AS (
+  SELECT 
+    id_hdc,
+    user_identification_number,
+    hdc_date,
+    updated_at_auto,
+    summary
+  FROM ${ref("tbl_sq_hdc_validity")}
+  WHERE summary IS NOT NULL
+  ${when(incremental(), `AND DATETIME(CAST(updated_at_auto AS TIMESTAMP), "America/Bogota") > (SELECT MAX(updated_at_auto) FROM ${self()})`)}
+)
+
+SELECT
+  -- 1. Llaves y Metadatos (Granularidad 1:1)
+  CAST(id_hdc AS STRING) AS id_hdc,
+  CAST(user_identification_number AS STRING) AS identificacion,
+  DATETIME(CAST(hdc_date AS TIMESTAMP), 'America/Bogota') AS fecha_consulta_hdc,
+  DATETIME(CAST(updated_at_auto AS TIMESTAMP), 'America/Bogota') AS updated_at_auto,
+
+  -- 2. Extracción de Summary (Métricas Totales)
+  SAFE_CAST(JSON_EXTRACT_SCALAR(summary, '$.creditoVigentes') AS INT64) AS creditos_vigentes,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(summary, '$.creditosActualesNegativos') AS INT64) AS creditos_negativos,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(summary, '$.saldoTotal') AS NUMERIC) AS saldo_total,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(summary, '$.saldoTotalEnMora') AS NUMERIC) AS saldo_en_mora,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(summary, '$.cuotaMensual') AS NUMERIC) AS cuota_mensual_total,
+  SAFE_CAST(JSON_EXTRACT_SCALAR(summary, '$.antiguedadDesde') AS DATE) AS antiguedad_desde
+
+FROM raw_hdc
