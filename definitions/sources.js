@@ -161,6 +161,29 @@ declare({
   description: "Datos crudos JSON de la nueva calculadora familiar"
 });
 
+// 21. Usuarios (Asesores)
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "BI",
+  name: "dim_smlv",
+  description: "Usuarios del sistema"
+});
+
+// 22. Usuarios (Asesores)
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "BI",
+  name: "dim_nombres_genero",
+  description: "Usuarios del sistema"
+});
+
+// 23. Usuarios (Asesores)
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "BI",
+  name: "dim_parametros_score",
+  description: "Usuarios del sistema"
+});
 
 // --- NUEVO ENTORNO: STREAM (SHADOW TEST) ---
 
