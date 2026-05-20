@@ -46,7 +46,8 @@ SELECT
   SAFE_CAST(dependents AS INT64) AS dependents,
 
   -- 4. DATOS DEL PROYECTO
-  UPPER(TRIM(builderKey)) AS builderKey,
+  builderKey,
+  UPPER(TRIM(builderKey)) AS constructora,
   UPPER(TRIM(projectName)) AS projectName,
   UPPER(TRIM(projectCity)) AS projectCity,
   UPPER(TRIM(propertyType)) AS propertyType,
