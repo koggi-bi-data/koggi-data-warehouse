@@ -81,7 +81,7 @@ WITH base_parsed AS (
       ${ref("tbl_sq_score_validity")}
 
   -- LOGICA INCREMENTAL CORREGIDA (SCD Tipo 1)
-  ${when(incremental(), `WHERE DATETIME(CAST(updated_at_auto AS TIMESTAMP), "America/Bogota") > (SELECT MAX(fecha_actualizacion_etl) FROM ${self()})`)}
+  ${when(incremental(), `WHERE DATETIME(CAST(updated_at_auto AS TIMESTAMP), "America/Bogota") > (SELECT MAX(updated_at_auto) FROM ${self()})`)}
 )
 
 SELECT
