@@ -61,7 +61,7 @@ WITH
       s.ingreso_final AS INGRESO_FINAL,
       s.cuotas_titular AS CUOTAS_TITULAR,
       s.endeudamiento AS ENDEUDAMIENTO,
-      s.actividad_economica AS ocupacion,
+      COALESCE(s.actividad_economica, 'SIN ACTIVIDAD ECONOMICA') AS ocupacion,
       CASE
         WHEN l.idFamilyGroup IS NULL OR l.idFamilyGroup = 0 THEN 'TITULAR'
         WHEN fam.principalIdLead = CAST(l.id_lead AS INT64) THEN 'TITULAR'
