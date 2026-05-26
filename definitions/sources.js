@@ -177,12 +177,68 @@ declare({
   description: "Usuarios del sistema"
 });
 
-// 23. Usuarios (Asesores)
+// 23. Parametros Score
 declare({
   database: "davinci-onegroup-prod",
   schema: "BI",
   name: "dim_parametros_score",
   description: "Usuarios del sistema"
+});
+
+// 24. Reglas Calificacion
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col_stream",
+  name: "tbl_sq_leads_lite_qualification_rules",
+  description: "Reglas de Calificación para Profiling LITE"
+});
+
+// 25. Score Decision Lite
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col_stream",
+  name: "tbl_int_score_decision",
+  description: "Dimensiones Score Profiling LITE"
+});
+
+// 26. Dimensiones Ocupación Actividad Economica
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col_stream",
+  name: "tbl_int_occupations",
+  description: "Dimensiones Ocupaciones - Actividad Economica - Profiling LITE"
+});
+
+// 27. Dimensiones Tipo de Identificación
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col_stream",
+  name: "tbl_int_identifications_types",
+  description: "Dimensiones tipos de Identificacion - Profiling LITE"
+});
+
+// 28. Tabla Hechos de Leads Lite
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col_stream",
+  name: "tbl_sq_leads_lite",
+  description: "Tabla Hechos Leads - Profiling LITE"
+});
+
+// 29. Resultados Financieros de Profiling Lite
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col_stream",
+  name: "tbl_sq_leads_lite_finantial_results",
+  description: "Tabla Hechos Leads - Profiling LITE"
+});
+  
+// 30. Motor de Decisiones de Profiling Lite
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col_stream",
+  name: "tbl_sq_lite_decision_engine",
+  description: "Tabla Hechos Ledas - Profiling LITE"
 });
 
 // --- NUEVO ENTORNO: STREAM (SHADOW TEST) ---
@@ -193,4 +249,3 @@ declare({
 //   name: "tbl_sq_leads",
 //   description: "Tabla de leads replicada vía stream (Shadow Test de validación contra central_col)"
 // });
-

@@ -1,0 +1,57 @@
+config {
+  type: "incremental",
+  schema: "BI",
+  name: "stg_profiling_lite",
+  description: "Tabla de hechos Silver para Profiling Lite. Consolidación de métricas transaccionales y llaves foráneas.",
+  tags: ["profiling", "silver", "daily"],
+  uniqueKey: ["lead_id"],
+  bigquery: {
+    partitionBy: "DATE(fecha_creacion)",
+    clusterBy: ["project_id", "builderkey"]
+  }
+}
+
+SELECT 
+  -- Llaves Primarias y Foráneas
+  l.id AS lead_id,
+  l.projectId AS project_id,
+  l.userId AS user_id,
+  l.qualificationId AS qualification_id,
+  l.occupationId AS occupation_id,
+  l.identificationTypeId AS identification_type_id,
+  d.scoreDecisionId AS score_decision_id,
+  l.builderId AS builderkey,
+  
+  -- Hechos: Datos Base del Lead
+  l.createdAt AS fecha_creacion,
+  l.identification AS documento_cliente,
+  TRIM(CONCAT(IFNULL(l.firstName, ''), ' ', IFNULL(l.middleName, ''), ' ', IFNULL(l.lastName, ''), ' ', IFNULL(l.secondLastName, ''))) AS nombre_completo,
+  LOWER(TRIM(l.email)) AS email,
+  l.phoneNumber AS telefono,
+  CAST(l.income AS FLOAT64) AS ingresos_declarados,
+  
+  -- Hechos: Resultados Financieros
+  CAST(f.propertyValue AS FLOAT64) AS valor_inmueble,
+  CAST(f.creditValue AS FLOAT64) AS valor_credito,
+  CAST(f.availableMonthlyValue AS FLOAT64) AS cuota_disponible,
+  CAST(f.initialPayment AS FLOAT64) AS cuota_inicial,
+  CAST(f.maximumCreditAccordingToAvailablePesos AS FLOAT64) AS max_credito_pesos,
+  CAST(f.maximumCreditAccordingToAvailableUvr AS FLOAT64) AS max_credito_uvr,
+  
+  -- Hechos: Motor de Decisión
+  CAST(d.scoring AS INT64) AS score_motor,
+  CAST(d.income AS FLOAT64) AS ingresos_validados,
+  CAST(d.indebtedness AS FLOAT64) AS endeudamiento,
+  d.decision AS decision_motor_raw,
+  
+  -- Flags de completitud
+  IF(f.leadId IS NOT NULL, TRUE, FALSE) AS flag_financiero,
+  IF(d.idLead IS NOT NULL, TRUE, FALSE) AS flag_motor
+
+FROM ${ref("tbl_sq_leads_lite")} l
+LEFT JOIN ${ref("tbl_sq_leads_lite_finantial_results")} f 
+  ON l.id = f.leadId
+LEFT JOIN ${ref("tbl_sq_lite_decision_engine")} d 
+  ON l.id = d.idLead
+
+${when(incremental(), `WHERE l.createdAt > (SELECT MAX(fecha_creacion) FROM ${self()})`)}

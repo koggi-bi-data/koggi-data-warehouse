@@ -1,0 +1,75 @@
+config {
+  type: "table",
+  schema: "BI",
+  name: "fact_lite_reporte",
+  description: "One Big Table (OBT) para Looker Studio. Contiene resultados de Profiling Lite y seguridad RLS.",
+  tags: ["profiling", "gold", "looker"],
+  bigquery: {
+    partitionBy: "DATE(fecha_perfilamiento)",
+    clusterBy: ["looker_security_uid", "proyecto_nombre"]
+  },
+  assertions: {
+    nonNull: ["lead_id"]
+  }
+}
+
+SELECT 
+  -- Llave de Seguridad Looker Studio
+  lb.uid_entity AS looker_security_uid,
+  ed.entity_name AS constructora_nombre,
+
+  -- Dimensiones de Tiempo
+  fct.fecha_creacion AS fecha_perfilamiento,
+  
+  -- Dimensiones del Lead
+  fct.lead_id,
+  idt.name AS tipo_documento,
+  fct.documento_cliente,
+  NULLIF(fct.nombre_completo, '') AS nombre_cliente,
+  fct.email AS correo_cliente,
+  fct.telefono AS telefono_cliente,
+  occ.name AS ocupacion,
+  
+  -- Dimensiones de Proyecto y Asesor
+  p.name AS proyecto_nombre,
+  p.city AS proyecto_ciudad,
+  p.type_dwelling AS proyecto_tipo_vivienda,
+  u.name AS asesor_nombre,
+  
+  -- Dimensiones de Calificación y Viabilidad
+  COALESCE(q.name, 'SIN CALIFICACIÓN') AS calificacion_medalla,
+  COALESCE(sd.decision, fct.decision_motor_raw, 'PENDIENTE') AS estado_viabilidad,
+  fct.score_motor,
+  COALESCE(sd.rangeText, CONCAT(CAST(sd.minScore AS STRING), ' - ', CAST(sd.maxScore AS STRING))) AS rango_score,
+  
+  -- Métricas (Facts)
+  fct.valor_inmueble,
+  fct.valor_credito,
+  COALESCE(fct.ingresos_validados, fct.ingresos_declarados) AS ingresos_mensuales,
+  fct.endeudamiento AS valor_endeudamiento,
+  fct.cuota_disponible,
+  fct.cuota_inicial,
+  fct.max_credito_pesos,
+  fct.max_credito_uvr,
+  
+  -- Flags Analíticos
+  fct.flag_financiero,
+  fct.flag_motor
+
+FROM ${ref("stg_profiling_lite")} fct
+LEFT JOIN ${ref("tbl_entity_database")} ed 
+  ON fct.builderkey = ed.id_entity
+LEFT JOIN ${ref("tbl_looker_board")} lb 
+  ON ed.id_entity = lb.entity_id
+LEFT JOIN ${ref("tbl_builder_projects")} p 
+  ON fct.project_id = p.id
+LEFT JOIN ${ref("tbl_user")} u 
+  ON fct.user_id = u.id
+LEFT JOIN ${ref("tbl_sq_leads_lite_qualification_rules")} q 
+  ON fct.qualification_id = q.id
+LEFT JOIN ${ref("tbl_int_score_decision")} sd 
+  ON fct.score_decision_id = sd.id
+LEFT JOIN ${ref("tbl_int_occupations")} occ 
+  ON fct.occupation_id = occ.id
+LEFT JOIN ${ref("tbl_int_identifications_types")} idt 
+  ON fct.identification_type_id = idt.id
