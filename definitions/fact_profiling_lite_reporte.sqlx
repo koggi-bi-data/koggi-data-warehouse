@@ -41,6 +41,7 @@ SELECT
   COALESCE(sd.decision, fct.decision_motor_raw, 'PENDIENTE') AS estado_viabilidad,
   fct.score_motor,
   COALESCE(sd.rangeText, CONCAT(CAST(sd.minScore AS STRING), ' - ', CAST(sd.maxScore AS STRING))) AS rango_score,
+  SAFE_DIVIDE(fct.endeudamiento, COALESCE(fct.ingresos_validados, fct.ingresos_declarados)) AS porcentaje_endeudamiento,
   
   -- Métricas (Facts)
   fct.valor_inmueble,
