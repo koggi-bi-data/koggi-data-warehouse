@@ -13,6 +13,15 @@ config {
   }
 }
 
+WITH
+  -- 1. PARÁMETROS DINÁMICOS (SMMLV Actual)
+  current_smlv AS (
+    SELECT CAST(valor_smlv AS INT64) AS valor
+    FROM ${ref("dim_smlv")}
+    WHERE CAST(anio AS INT64) = EXTRACT(YEAR FROM CURRENT_DATE('America/Bogota'))
+    LIMIT 1
+  )
+
 SELECT 
   -- Llave de Seguridad Looker Studio
   lb.uid_entity AS looker_security_uid,
@@ -37,10 +46,24 @@ SELECT
   u.name AS asesor_nombre,
   
   -- Dimensiones de Calificación y Viabilidad
-  COALESCE(q.name, 'SIN CALIFICACIÓN') AS calificacion_medalla,
-  COALESCE(sd.decision, fct.decision_motor_raw, 'PENDIENTE') AS estado_viabilidad,
+  COALESCE(q.name, 'Sin Calificación') AS calificacion_medalla,
+  COALESCE(sd.decision, fct.decision_motor_raw, 'Pendiente') AS estado_viabilidad,
   fct.score_motor,
   COALESCE(sd.rangeText, CONCAT(CAST(sd.minScore AS STRING), ' - ', CAST(sd.maxScore AS STRING))) AS rango_score,
+  
+  -- Rango SMMLV Dinámico
+  COALESCE(
+    CASE
+      WHEN COALESCE(fct.ingresos_validados, fct.ingresos_declarados) < smlv.valor THEN 'Menor a 1 SMMLV'
+      WHEN COALESCE(fct.ingresos_validados, fct.ingresos_declarados) <= (smlv.valor * 2) THEN '1 a 2 SMMLV'
+      WHEN COALESCE(fct.ingresos_validados, fct.ingresos_declarados) <= (smlv.valor * 4) THEN '2 a 4 SMMLV'
+      WHEN COALESCE(fct.ingresos_validados, fct.ingresos_declarados) <= (smlv.valor * 8) THEN '4 a 8 SMMLV'
+      WHEN COALESCE(fct.ingresos_validados, fct.ingresos_declarados) <= (smlv.valor * 10) THEN '8 a 10 SMMLV'
+      WHEN COALESCE(fct.ingresos_validados, fct.ingresos_declarados) > (smlv.valor * 10) THEN 'Más de 10 SMMLV'
+      ELSE NULL
+    END, 'Sin Información'
+  ) AS rango_salarios,
+  
   SAFE_DIVIDE(fct.endeudamiento, COALESCE(fct.ingresos_validados, fct.ingresos_declarados)) AS porcentaje_endeudamiento,
   
   -- Métricas (Facts)
@@ -58,8 +81,9 @@ SELECT
   fct.flag_motor
 
 FROM ${ref("stg_profiling_lite")} fct
+CROSS JOIN current_smlv smlv
 LEFT JOIN ${ref("tbl_entity_database")} ed 
-  ON fct.builderkey = ed.id_entity
+  ON fct.builderkey = ed.id_entity_database
 LEFT JOIN ${ref("tbl_looker_board")} lb 
   ON ed.id_entity = lb.entity_id
 LEFT JOIN ${ref("tbl_builder_projects")} p 
