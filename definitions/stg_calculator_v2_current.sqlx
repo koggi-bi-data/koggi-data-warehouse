@@ -263,3 +263,4 @@ SELECT
     CAST(ROUND(CAST(JSON_VALUE(uvr_30_mediana, '$.tasa_mediana.total_gastos') AS FLOAT64)) AS INT64) AS total_gastos_UVR_30_mediana
 
 FROM agnostic_objects
+QUALIFY ROW_NUMBER() OVER(PARTITION BY document_id ORDER BY timestamp DESC) = 1
