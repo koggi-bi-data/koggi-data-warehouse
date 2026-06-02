@@ -14,223 +14,252 @@ config {
 WITH raw_data AS (
     SELECT 
         document_id,
-        created_at,
-        data
-    FROM ${ref("CalculatorCol")} 
+        created_at AS timestamp,
+        data,
+        PARSE_JSON(data) AS json_data
+    FROM ${ref("CalculatorCol")}
     WHERE created_at >= '2026-04-21' 
-    ${when(incremental(), `AND created_at > (SELECT MAX(timestamp) FROM ${self()})`)}
-)
+      AND data IS NOT NULL
+      ${when(incremental(), `AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)`)}
+),
+extracted_arrays AS (
+    SELECT 
+        document_id,
+        timestamp,
+        data,
+        json_data,
+        CAST(COALESCE(JSON_VALUE(json_data, '$._is_deleted'), 'false') AS BOOL) AS is_deleted,
+        
+        JSON_QUERY_ARRAY(json_data, '$.cuotas.COP') AS arr_cop,
+        JSON_QUERY_ARRAY(json_data, '$.cuotas.UVR') AS arr_uvr,
+        JSON_QUERY_ARRAY(json_data, '$.creditos') AS arr_creditos,
+        
+        PARSE_JSON(JSON_VALUE(json_data, '$.original_response')) AS original_response_json
+    FROM raw_data
+),
+agnostic_objects AS (
+    SELECT
+        document_id,
+        timestamp,
+        data,
+        json_data,
+        is_deleted,
+        original_response_json,
+        
+        -- EXTRACCIÓN CRÉDITOS MAXIMOS
+        (SELECT obj FROM UNNEST(arr_creditos) AS obj WHERE JSON_TYPE(JSON_QUERY(obj, '$.COP')) = 'object' LIMIT 1) AS creditos_cop_obj,
+        (SELECT obj FROM UNNEST(arr_creditos) AS obj WHERE JSON_TYPE(JSON_QUERY(obj, '$.UVR')) = 'object' LIMIT 1) AS creditos_uvr_obj,
 
+        -- EXTRACCIÓN COP
+        (SELECT obj FROM UNNEST(arr_cop) AS obj WHERE JSON_TYPE(JSON_QUERY(obj, '$.tasa_baja')) = 'object' AND JSON_VALUE(obj, '$.tiempo') = '15' LIMIT 1) AS cop_15_baja,
+        (SELECT obj FROM UNNEST(arr_cop) AS obj WHERE JSON_TYPE(JSON_QUERY(obj, '$.tasa_mediana')) = 'object' AND JSON_VALUE(obj, '$.tiempo') = '15' LIMIT 1) AS cop_15_mediana,
+        (SELECT obj FROM UNNEST(arr_cop) AS obj WHERE JSON_TYPE(JSON_QUERY(obj, '$.tasa_baja')) = 'object' AND JSON_VALUE(obj, '$.tiempo') = '20' LIMIT 1) AS cop_20_baja,
+        (SELECT obj FROM UNNEST(arr_cop) AS obj WHERE JSON_TYPE(JSON_QUERY(obj, '$.tasa_mediana')) = 'object' AND JSON_VALUE(obj, '$.tiempo') = '20' LIMIT 1) AS cop_20_mediana,
+        (SELECT obj FROM UNNEST(arr_cop) AS obj WHERE JSON_TYPE(JSON_QUERY(obj, '$.tasa_baja')) = 'object' AND JSON_VALUE(obj, '$.tiempo') = '30' LIMIT 1) AS cop_30_baja,
+        (SELECT obj FROM UNNEST(arr_cop) AS obj WHERE JSON_TYPE(JSON_QUERY(obj, '$.tasa_mediana')) = 'object' AND JSON_VALUE(obj, '$.tiempo') = '30' LIMIT 1) AS cop_30_mediana,
+
+        -- EXTRACCIÓN UVR
+        (SELECT obj FROM UNNEST(arr_uvr) AS obj WHERE JSON_TYPE(JSON_QUERY(obj, '$.tasa_baja')) = 'object' AND JSON_VALUE(obj, '$.tiempo') = '15' LIMIT 1) AS uvr_15_baja,
+        (SELECT obj FROM UNNEST(arr_uvr) AS obj WHERE JSON_TYPE(JSON_QUERY(obj, '$.tasa_mediana')) = 'object' AND JSON_VALUE(obj, '$.tiempo') = '15' LIMIT 1) AS uvr_15_mediana,
+        (SELECT obj FROM UNNEST(arr_uvr) AS obj WHERE JSON_TYPE(JSON_QUERY(obj, '$.tasa_baja')) = 'object' AND JSON_VALUE(obj, '$.tiempo') = '20' LIMIT 1) AS uvr_20_baja,
+        (SELECT obj FROM UNNEST(arr_uvr) AS obj WHERE JSON_TYPE(JSON_QUERY(obj, '$.tasa_mediana')) = 'object' AND JSON_VALUE(obj, '$.tiempo') = '20' LIMIT 1) AS uvr_20_mediana,
+        (SELECT obj FROM UNNEST(arr_uvr) AS obj WHERE JSON_TYPE(JSON_QUERY(obj, '$.tasa_baja')) = 'object' AND JSON_VALUE(obj, '$.tiempo') = '30' LIMIT 1) AS uvr_30_baja,
+        (SELECT obj FROM UNNEST(arr_uvr) AS obj WHERE JSON_TYPE(JSON_QUERY(obj, '$.tasa_mediana')) = 'object' AND JSON_VALUE(obj, '$.tiempo') = '30' LIMIT 1) AS uvr_30_mediana
+
+    FROM extracted_arrays
+)
 SELECT
     document_id,
-    created_at as timestamp,
-    'v2_current' AS version_esquema,
-
-    ---------------------------------------------------------------------------
-    -- 1. IDENTIFICACIÓN Y DATOS PERSONALES (Raíz)
-    ---------------------------------------------------------------------------
+    timestamp,
     data,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.id_lead") AS INT64) AS id_lead,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.identificacion") AS INT64) AS identificacion,
-    JSON_EXTRACT_SCALAR(data, "$.identificationType") AS tipo_identificacion,
-    JSON_EXTRACT_SCALAR(data, "$.nombre") AS nombre_completo,
-    JSON_EXTRACT_SCALAR(data, "$.ocupacion") AS ocupacion,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.personas_cargo") AS INT64) AS personas_a_cargo,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.edad_aproximada") AS INT64) AS edad_aproximada,
-    JSON_EXTRACT_SCALAR(data, "$.indicador_edad") AS indicador_edad,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.idFamilyGroup") AS INT64) AS idFamilyGroup,
-    COALESCE(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.followUp") AS BOOL), FALSE) AS es_followup_origen,
-    CASE
-        WHEN COALESCE(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.followUp") AS BOOL), FALSE) IS TRUE THEN 'FOLLOW UP'
-        ELSE 'PROFILING'
-    END AS tipo_registro_origen,
-
-    ---------------------------------------------------------------------------
-    -- 2. DATOS DEL PROYECTO Y CONSTRUCTORA (Raíz)
-    ---------------------------------------------------------------------------
-    JSON_EXTRACT_SCALAR(data, "$.constructora") AS constructora,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.idProject") AS INT64) AS id_proyecto,
-    JSON_EXTRACT_SCALAR(data, "$.proyecto") AS proyecto,
-    JSON_EXTRACT_SCALAR(data, "$.ciudad") AS ciudad_proyecto,
-    JSON_EXTRACT_SCALAR(data, "$.tipo_vivienda") AS tipo_vivienda,
-    JSON_EXTRACT_SCALAR(data, "$.projectBankNIT") AS project_bank_nit,
-    JSON_EXTRACT_SCALAR(data, "$.propertyDelivery") AS fecha_entrega_inmueble,
-
-    ---------------------------------------------------------------------------
-    -- 3. RESULTADOS DE PERFILAMIENTO Y SCORE (Raíz)
-    ---------------------------------------------------------------------------
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.score") AS INT64) AS score,
-    JSON_EXTRACT_SCALAR(data, "$.decision_score") AS decision_score,
-    JSON_EXTRACT_SCALAR(data, "$.koggi_profiling") AS koggi_profiling,
-    JSON_EXTRACT_SCALAR(data, "$.calificacion") AS calificacion_sugerida,
-    JSON_EXTRACT_SCALAR(data, "$.color_score") AS color_score,
-
-    ---------------------------------------------------------------------------
-    -- 4. VARIABLES FINANCIERAS Y CAPACIDAD DE PAGO (Raíz)
-    ---------------------------------------------------------------------------
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.valor_inmueble") AS INT64) AS valor_inmueble,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.valor_credito") AS INT64) AS valor_credito,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.ingresos") AS FLOAT64) AS ingresos_estimados,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas_titular") AS FLOAT64) AS obligaciones_financieras,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.gastos_familiares") AS FLOAT64) AS gastos_familiares,
     
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.endeudamiento_financiero") AS FLOAT64) AS endeudamiento_financiero,
-    JSON_EXTRACT_SCALAR(data, "$.indicador_endeudamiento_financiero") AS indicador_endeudamiento_financiero,
-    JSON_EXTRACT_SCALAR(data, "$.descripcion_endeudamiento_financiero") AS descripcion_endeudamiento_financiero,
+    -- Control Interno
+    is_deleted,
+    COALESCE(JSON_VALUE(json_data, '$.version'), '2') AS version_esquema,
+    'firestore_calculator_v2' AS tipo_registro_origen,
     
-    JSON_EXTRACT_SCALAR(data, "$.indicador_ley_vivienda") AS indicador_ley_vivienda,
+    -- IDs
+    CAST(COALESCE(JSON_VALUE(json_data, '$.id_lead'), JSON_VALUE(json_data, '$.id')) AS INT64) AS id_lead,
+    CAST(JSON_VALUE(json_data, '$.idProject') AS INT64) AS id_proyecto,
+    CAST(JSON_VALUE(json_data, '$.idFamilyGroup') AS INT64) AS idFamilyGroup,
     
-    SAFE_CAST(ROUND(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.disponible_cuota_segun_ingresos") AS FLOAT64)) AS INT64) AS disponible_cuota_segun_ingresos,
-    SAFE_CAST(ROUND(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.maximo_cuota_ley_vivienda") AS FLOAT64)) AS INT64) AS maximo_cuota_ley_vivienda,
-    SAFE_CAST(ROUND(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_minima_disponible") AS FLOAT64)) AS INT64) AS cuota_minima_disponible,
+    -- Demográficos y Financieros
+    CAST(JSON_VALUE(json_data, '$.identificacion') AS INT64) AS identificacion,
+    JSON_VALUE(json_data, '$.identificationType') AS tipo_identificacion,
+    JSON_VALUE(json_data, '$.nombre') AS nombre_completo,
+    CAST(JSON_VALUE(json_data, '$.edad_aproximada') AS INT64) AS edad_aproximada,
+    JSON_VALUE(json_data, '$.ocupacion') AS ocupacion,
+    CAST(JSON_VALUE(json_data, '$.personas_cargo') AS INT64) AS personas_a_cargo,
+    CAST(JSON_VALUE(json_data, '$.ingresos') AS FLOAT64) AS ingresos_estimados,
+    CAST(JSON_VALUE(json_data, '$.gastos_familiares') AS FLOAT64) AS gastos_familiares,
+    CAST(JSON_VALUE(json_data, '$.endeudamiento_financiero') AS FLOAT64) AS endeudamiento_financiero,
+    JSON_VALUE(json_data, '$.descripcion_endeudamiento_financiero') AS descripcion_endeudamiento_financiero,
+    
+    -- Proyecto
+    JSON_VALUE(json_data, '$.proyecto') AS proyecto,
+    JSON_VALUE(json_data, '$.ciudad') AS ciudad_proyecto,
+    JSON_VALUE(json_data, '$.constructora') AS constructora,
+    JSON_VALUE(json_data, '$.projectBankNIT') AS project_bank_nit,
+    JSON_VALUE(json_data, '$.tipo_vivienda') AS tipo_vivienda,
+    JSON_VALUE(json_data, '$.propertyDelivery') AS fecha_entrega_inmueble,
+    CAST(JSON_VALUE(json_data, '$.valor_inmueble') AS INT64) AS valor_inmueble,
+    CAST(JSON_VALUE(json_data, '$.valor_credito') AS INT64) AS valor_credito,
+    
+    -- Calificación
+    CAST(JSON_VALUE(json_data, '$.score') AS INT64) AS score,
+    JSON_VALUE(json_data, '$.calificacion') AS calificacion_sugerida,
+    JSON_VALUE(json_data, '$.color_score') AS color_score,
+    JSON_VALUE(json_data, '$.decision_score') AS decision_score,
+    JSON_VALUE(json_data, '$.koggi_profiling') AS koggi_profiling,
+    CAST(JSON_VALUE(json_data, '$.followUp') AS BOOL) AS es_followup_origen,
+    
+    -- Viabilidad
+    JSON_VALUE(json_data, '$.indicador_edad') AS indicador_edad,
+    JSON_VALUE(json_data, '$.indicador_endeudamiento_financiero') AS indicador_endeudamiento_financiero,
+    JSON_VALUE(json_data, '$.indicador_ley_vivienda') AS indicador_ley_vivienda,
+    
+    -- Datacrédito
+    CAST(JSON_VALUE(original_response_json, '$.age.min') AS INT64) AS edad_minima_datacredito,
+    CAST(JSON_VALUE(original_response_json, '$.age.max') AS INT64) AS edad_maxima_datacredito,
+    JSON_VALUE(original_response_json, '$.nationalPerson.identification.issueDate') AS fecha_expedicion_documento,
+    CAST(JSON_VALUE(original_response_json, '$.summary."CUOTA MENSUAL CREDITO"') AS FLOAT64) AS obligaciones_financieras,
+    
+    -- Bancos
+    CAST(JSON_VALUE(json_data, '$.koggiBankParams.bankId') AS INT64) AS bank_id,
+    CAST(JSON_VALUE(json_data, '$.koggiBankParams.allRiskValue') AS FLOAT64) AS bank_all_risk_value,
+    CAST(JSON_VALUE(json_data, '$.koggiBankParams.lifeInsurance') AS FLOAT64) AS bank_life_insurance,
+    CAST(JSON_VALUE(json_data, '$.koggiBankParams.maximumToFinance') AS FLOAT64) AS bank_max_to_finance,
+    
+    -- Capacidades Globales
+    CAST(ROUND(CAST(JSON_VALUE(json_data, '$.cuota_minima_disponible') AS FLOAT64)) AS INT64) AS cuota_minima_disponible,
+    CAST(ROUND(CAST(JSON_VALUE(json_data, '$.disponible_cuota_segun_ingresos') AS FLOAT64)) AS INT64) AS disponible_cuota_segun_ingresos,
+    CAST(ROUND(CAST(JSON_VALUE(json_data, '$.maximo_cuota_ley_vivienda') AS FLOAT64)) AS INT64) AS maximo_cuota_ley_vivienda,
+    
+    CAST(ROUND(CAST(JSON_VALUE(creditos_cop_obj, '$.COP.credito_maximo_disponible') AS FLOAT64)) AS INT64) AS credito_maximo_segun_disponible_COP,
+    CAST(ROUND(CAST(JSON_VALUE(creditos_cop_obj, '$.COP.diferencia_credito_maximo') AS FLOAT64)) AS INT64) AS diferencia_credito_maximo_COP,
+    CAST(ROUND(CAST(JSON_VALUE(creditos_uvr_obj, '$.UVR.credito_maximo_disponible') AS FLOAT64)) AS INT64) AS credito_maximo_segun_disponible_UVR,
+    CAST(ROUND(CAST(JSON_VALUE(creditos_uvr_obj, '$.UVR.diferencia_credito_maximo') AS FLOAT64)) AS INT64) AS diferencia_credito_maximo_UVR,
 
-    ---------------------------------------------------------------------------
-    -- 5. DATOS BANCARIOS (koggiBankParams)
-    ---------------------------------------------------------------------------
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.koggiBankParams.bankId") AS INT64) AS bank_id,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.koggiBankParams.lifeInsurance") AS FLOAT64) AS bank_life_insurance,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.koggiBankParams.allRiskValue") AS FLOAT64) AS bank_all_risk_value,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.koggiBankParams.maximumToFinance") AS FLOAT64) AS bank_max_to_finance,
+    -- ================= MATRIZ DE CUOTAS Y TASAS =================
+    
+    -- COP 15 BAJA
+    CAST(JSON_VALUE(cop_15_baja, '$.tasa_baja.tasa') AS FLOAT64) AS tasa_COP_15_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_15_baja, '$.tasa_baja.prestamo_maximo') AS FLOAT64)) AS INT64) AS MaximoPrestamo_COP_15_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_15_baja, '$.tasa_baja.cuota') AS FLOAT64)) AS INT64) AS cuota_COP_15_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_15_baja, '$.tasa_baja.ingresos_faltantes') AS FLOAT64)) AS INT64) AS ingresos_faltantes_COP_15_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_15_baja, '$.tasa_baja.ingresos_ideales') AS FLOAT64)) AS INT64) AS ingresos_ideales_COP_15_baja,
+    CAST(JSON_VALUE(cop_15_baja, '$.tasa_baja.porc_capacidad_pago') AS FLOAT64) AS porc_capacidad_pago_COP_15_baja,
+    CAST(JSON_VALUE(cop_15_baja, '$.tasa_baja.relacion_cuota_ingresos') AS FLOAT64) AS relacion_cuota_ingresos_COP_15_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_15_baja, '$.tasa_baja.total_gastos') AS FLOAT64)) AS INT64) AS total_gastos_COP_15_baja,
 
-    ---------------------------------------------------------------------------
-    -- 6. DATOS DE DATACRÉDITO (original_response - string escapado)
-    ---------------------------------------------------------------------------
-    SAFE_CAST(JSON_EXTRACT_SCALAR(JSON_EXTRACT_SCALAR(data, "$.original_response"), "$.nationalPerson.age.min") AS INT64) AS edad_minima_datacredito,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(JSON_EXTRACT_SCALAR(data, "$.original_response"), "$.nationalPerson.age.max") AS INT64) AS edad_maxima_datacredito,
-    JSON_EXTRACT_SCALAR(JSON_EXTRACT_SCALAR(data, "$.original_response"), "$.nationalPerson.identification.issueDate") AS fecha_expedicion_documento,
+    -- COP 15 MEDIANA
+    CAST(JSON_VALUE(cop_15_mediana, '$.tasa_mediana.tasa') AS FLOAT64) AS tasa_COP_15_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_15_mediana, '$.tasa_mediana.prestamo_maximo') AS FLOAT64)) AS INT64) AS MaximoPrestamo_COP_15_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_15_mediana, '$.tasa_mediana.cuota') AS FLOAT64)) AS INT64) AS cuota_COP_15_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_15_mediana, '$.tasa_mediana.ingresos_faltantes') AS FLOAT64)) AS INT64) AS ingresos_faltantes_COP_15_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_15_mediana, '$.tasa_mediana.ingresos_ideales') AS FLOAT64)) AS INT64) AS ingresos_ideales_COP_15_mediana,
+    CAST(JSON_VALUE(cop_15_mediana, '$.tasa_mediana.porc_capacidad_pago') AS FLOAT64) AS porc_capacidad_pago_COP_15_mediana,
+    CAST(JSON_VALUE(cop_15_mediana, '$.tasa_mediana.relacion_cuota_ingresos') AS FLOAT64) AS relacion_cuota_ingresos_COP_15_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_15_mediana, '$.tasa_mediana.total_gastos') AS FLOAT64)) AS INT64) AS total_gastos_COP_15_mediana,
 
-    ---------------------------------------------------------------------------
-    -- 7. CRÉDITOS MÁXIMOS GLOBALES POR MONEDA
-    ---------------------------------------------------------------------------
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.creditos[0].COP.credito_maximo_disponible") AS INT64) AS credito_maximo_segun_disponible_COP,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.creditos[0].COP.diferencia_credito_maximo") AS INT64) AS diferencia_credito_maximo_COP,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.creditos[1].UVR.credito_maximo_disponible") AS INT64) AS credito_maximo_segun_disponible_UVR,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.creditos[1].UVR.diferencia_credito_maximo") AS INT64) AS diferencia_credito_maximo_UVR,
+    -- COP 20 BAJA
+    CAST(JSON_VALUE(cop_20_baja, '$.tasa_baja.tasa') AS FLOAT64) AS tasa_COP_20_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_20_baja, '$.tasa_baja.prestamo_maximo') AS FLOAT64)) AS INT64) AS MaximoPrestamo_COP_20_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_20_baja, '$.tasa_baja.cuota') AS FLOAT64)) AS INT64) AS cuota_COP_20_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_20_baja, '$.tasa_baja.ingresos_faltantes') AS FLOAT64)) AS INT64) AS ingresos_faltantes_COP_20_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_20_baja, '$.tasa_baja.ingresos_ideales') AS FLOAT64)) AS INT64) AS ingresos_ideales_COP_20_baja,
+    CAST(JSON_VALUE(cop_20_baja, '$.tasa_baja.porc_capacidad_pago') AS FLOAT64) AS porc_capacidad_pago_COP_20_baja,
+    CAST(JSON_VALUE(cop_20_baja, '$.tasa_baja.relacion_cuota_ingresos') AS FLOAT64) AS relacion_cuota_ingresos_COP_20_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_20_baja, '$.tasa_baja.total_gastos') AS FLOAT64)) AS INT64) AS total_gastos_COP_20_baja,
 
-    ---------------------------------------------------------------------------
-    -- 8. DESGLOSE DE CUOTAS COP (PESOS)
-    ---------------------------------------------------------------------------
-    -- COP 15 Años - Tasa Mediana (Índice 1)
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[1].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64) AS MaximoPrestamo_COP_15_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[1].tasa_mediana.cuota") AS INT64) AS cuota_COP_15_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[1].tasa_mediana.tasa") AS FLOAT64) AS tasa_COP_15_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[1].tasa_mediana.total_gastos") AS INT64) AS total_gastos_COP_15_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[1].tasa_mediana.porc_capacidad_pago") AS FLOAT64) AS porc_capacidad_pago_COP_15_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[1].tasa_mediana.relacion_cuota_ingresos") AS FLOAT64) AS relacion_cuota_ingresos_COP_15_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[1].tasa_mediana.ingresos_ideales") AS INT64) AS ingresos_ideales_COP_15_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[1].tasa_mediana.ingresos_faltantes") AS INT64) AS ingresos_faltantes_COP_15_mediana,
+    -- COP 20 MEDIANA
+    CAST(JSON_VALUE(cop_20_mediana, '$.tasa_mediana.tasa') AS FLOAT64) AS tasa_COP_20_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_20_mediana, '$.tasa_mediana.prestamo_maximo') AS FLOAT64)) AS INT64) AS MaximoPrestamo_COP_20_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_20_mediana, '$.tasa_mediana.cuota') AS FLOAT64)) AS INT64) AS cuota_COP_20_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_20_mediana, '$.tasa_mediana.ingresos_faltantes') AS FLOAT64)) AS INT64) AS ingresos_faltantes_COP_20_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_20_mediana, '$.tasa_mediana.ingresos_ideales') AS FLOAT64)) AS INT64) AS ingresos_ideales_COP_20_mediana,
+    CAST(JSON_VALUE(cop_20_mediana, '$.tasa_mediana.porc_capacidad_pago') AS FLOAT64) AS porc_capacidad_pago_COP_20_mediana,
+    CAST(JSON_VALUE(cop_20_mediana, '$.tasa_mediana.relacion_cuota_ingresos') AS FLOAT64) AS relacion_cuota_ingresos_COP_20_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_20_mediana, '$.tasa_mediana.total_gastos') AS FLOAT64)) AS INT64) AS total_gastos_COP_20_mediana,
 
-    -- COP 15 Años - Tasa Baja (Índice 0)
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[0].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS MaximoPrestamo_COP_15_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[0].tasa_baja.cuota") AS INT64) AS cuota_COP_15_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[0].tasa_baja.tasa") AS FLOAT64) AS tasa_COP_15_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[0].tasa_baja.total_gastos") AS INT64) AS total_gastos_COP_15_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[0].tasa_baja.porc_capacidad_pago") AS FLOAT64) AS porc_capacidad_pago_COP_15_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[0].tasa_baja.relacion_cuota_ingresos") AS FLOAT64) AS relacion_cuota_ingresos_COP_15_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[0].tasa_baja.ingresos_ideales") AS INT64) AS ingresos_ideales_COP_15_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[0].tasa_baja.ingresos_faltantes") AS INT64) AS ingresos_faltantes_COP_15_baja,
+    -- COP 30 BAJA
+    CAST(JSON_VALUE(cop_30_baja, '$.tasa_baja.tasa') AS FLOAT64) AS tasa_COP_30_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_30_baja, '$.tasa_baja.prestamo_maximo') AS FLOAT64)) AS INT64) AS MaximoPrestamo_COP_30_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_30_baja, '$.tasa_baja.cuota') AS FLOAT64)) AS INT64) AS cuota_COP_30_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_30_baja, '$.tasa_baja.ingresos_faltantes') AS FLOAT64)) AS INT64) AS ingresos_faltantes_COP_30_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_30_baja, '$.tasa_baja.ingresos_ideales') AS FLOAT64)) AS INT64) AS ingresos_ideales_COP_30_baja,
+    CAST(JSON_VALUE(cop_30_baja, '$.tasa_baja.porc_capacidad_pago') AS FLOAT64) AS porc_capacidad_pago_COP_30_baja,
+    CAST(JSON_VALUE(cop_30_baja, '$.tasa_baja.relacion_cuota_ingresos') AS FLOAT64) AS relacion_cuota_ingresos_COP_30_baja,
+    CAST(ROUND(CAST(JSON_VALUE(cop_30_baja, '$.tasa_baja.total_gastos') AS FLOAT64)) AS INT64) AS total_gastos_COP_30_baja,
 
-    -- COP 20 Años - Tasa Mediana (Índice 3)
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[3].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64) AS MaximoPrestamo_COP_20_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[3].tasa_mediana.cuota") AS INT64) AS cuota_COP_20_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[3].tasa_mediana.tasa") AS FLOAT64) AS tasa_COP_20_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[3].tasa_mediana.total_gastos") AS INT64) AS total_gastos_COP_20_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[3].tasa_mediana.porc_capacidad_pago") AS FLOAT64) AS porc_capacidad_pago_COP_20_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[3].tasa_mediana.relacion_cuota_ingresos") AS FLOAT64) AS relacion_cuota_ingresos_COP_20_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[3].tasa_mediana.ingresos_ideales") AS INT64) AS ingresos_ideales_COP_20_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[3].tasa_mediana.ingresos_faltantes") AS INT64) AS ingresos_faltantes_COP_20_mediana,
+    -- COP 30 MEDIANA
+    CAST(JSON_VALUE(cop_30_mediana, '$.tasa_mediana.tasa') AS FLOAT64) AS tasa_COP_30_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_30_mediana, '$.tasa_mediana.prestamo_maximo') AS FLOAT64)) AS INT64) AS MaximoPrestamo_COP_30_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_30_mediana, '$.tasa_mediana.cuota') AS FLOAT64)) AS INT64) AS cuota_COP_30_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_30_mediana, '$.tasa_mediana.ingresos_faltantes') AS FLOAT64)) AS INT64) AS ingresos_faltantes_COP_30_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_30_mediana, '$.tasa_mediana.ingresos_ideales') AS FLOAT64)) AS INT64) AS ingresos_ideales_COP_30_mediana,
+    CAST(JSON_VALUE(cop_30_mediana, '$.tasa_mediana.porc_capacidad_pago') AS FLOAT64) AS porc_capacidad_pago_COP_30_mediana,
+    CAST(JSON_VALUE(cop_30_mediana, '$.tasa_mediana.relacion_cuota_ingresos') AS FLOAT64) AS relacion_cuota_ingresos_COP_30_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(cop_30_mediana, '$.tasa_mediana.total_gastos') AS FLOAT64)) AS INT64) AS total_gastos_COP_30_mediana,
 
-    -- COP 20 Años - Tasa Baja (Índice 2)
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[2].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS MaximoPrestamo_COP_20_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[2].tasa_baja.cuota") AS INT64) AS cuota_COP_20_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[2].tasa_baja.tasa") AS FLOAT64) AS tasa_COP_20_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[2].tasa_baja.total_gastos") AS INT64) AS total_gastos_COP_20_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[2].tasa_baja.porc_capacidad_pago") AS FLOAT64) AS porc_capacidad_pago_COP_20_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[2].tasa_baja.relacion_cuota_ingresos") AS FLOAT64) AS relacion_cuota_ingresos_COP_20_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[2].tasa_baja.ingresos_ideales") AS INT64) AS ingresos_ideales_COP_20_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[2].tasa_baja.ingresos_faltantes") AS INT64) AS ingresos_faltantes_COP_20_baja,
+    -- UVR 15 BAJA
+    CAST(JSON_VALUE(uvr_15_baja, '$.tasa_baja.tasa') AS FLOAT64) AS tasa_UVR_15_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_15_baja, '$.tasa_baja.prestamo_maximo') AS FLOAT64)) AS INT64) AS MaximoPrestamo_UVR_15_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_15_baja, '$.tasa_baja.cuota') AS FLOAT64)) AS INT64) AS cuota_UVR_15_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_15_baja, '$.tasa_baja.ingresos_faltantes') AS FLOAT64)) AS INT64) AS ingresos_faltantes_UVR_15_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_15_baja, '$.tasa_baja.ingresos_ideales') AS FLOAT64)) AS INT64) AS ingresos_ideales_UVR_15_baja,
+    CAST(JSON_VALUE(uvr_15_baja, '$.tasa_baja.porc_capacidad_pago') AS FLOAT64) AS porc_capacidad_pago_UVR_15_baja,
+    CAST(JSON_VALUE(uvr_15_baja, '$.tasa_baja.relacion_cuota_ingresos') AS FLOAT64) AS relacion_cuota_ingresos_UVR_15_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_15_baja, '$.tasa_baja.total_gastos') AS FLOAT64)) AS INT64) AS total_gastos_UVR_15_baja,
 
-    -- COP 30 Años - Tasa Mediana (Índice 5)
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[5].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64) AS MaximoPrestamo_COP_30_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[5].tasa_mediana.cuota") AS INT64) AS cuota_COP_30_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[5].tasa_mediana.tasa") AS FLOAT64) AS tasa_COP_30_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[5].tasa_mediana.total_gastos") AS INT64) AS total_gastos_COP_30_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[5].tasa_mediana.porc_capacidad_pago") AS FLOAT64) AS porc_capacidad_pago_COP_30_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[5].tasa_mediana.relacion_cuota_ingresos") AS FLOAT64) AS relacion_cuota_ingresos_COP_30_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[5].tasa_mediana.ingresos_ideales") AS INT64) AS ingresos_ideales_COP_30_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[5].tasa_mediana.ingresos_faltantes") AS INT64) AS ingresos_faltantes_COP_30_mediana,
+    -- UVR 15 MEDIANA
+    CAST(JSON_VALUE(uvr_15_mediana, '$.tasa_mediana.tasa') AS FLOAT64) AS tasa_UVR_15_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_15_mediana, '$.tasa_mediana.prestamo_maximo') AS FLOAT64)) AS INT64) AS MaximoPrestamo_UVR_15_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_15_mediana, '$.tasa_mediana.cuota') AS FLOAT64)) AS INT64) AS cuota_UVR_15_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_15_mediana, '$.tasa_mediana.ingresos_faltantes') AS FLOAT64)) AS INT64) AS ingresos_faltantes_UVR_15_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_15_mediana, '$.tasa_mediana.ingresos_ideales') AS FLOAT64)) AS INT64) AS ingresos_ideales_UVR_15_mediana,
+    CAST(JSON_VALUE(uvr_15_mediana, '$.tasa_mediana.porc_capacidad_pago') AS FLOAT64) AS porc_capacidad_pago_UVR_15_mediana,
+    CAST(JSON_VALUE(uvr_15_mediana, '$.tasa_mediana.relacion_cuota_ingresos') AS FLOAT64) AS relacion_cuota_ingresos_UVR_15_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_15_mediana, '$.tasa_mediana.total_gastos') AS FLOAT64)) AS INT64) AS total_gastos_UVR_15_mediana,
 
-    -- COP 30 Años - Tasa Baja (Índice 4)
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[4].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS MaximoPrestamo_COP_30_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[4].tasa_baja.cuota") AS INT64) AS cuota_COP_30_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[4].tasa_baja.tasa") AS FLOAT64) AS tasa_COP_30_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[4].tasa_baja.total_gastos") AS INT64) AS total_gastos_COP_30_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[4].tasa_baja.porc_capacidad_pago") AS FLOAT64) AS porc_capacidad_pago_COP_30_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[4].tasa_baja.relacion_cuota_ingresos") AS FLOAT64) AS relacion_cuota_ingresos_COP_30_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[4].tasa_baja.ingresos_ideales") AS INT64) AS ingresos_ideales_COP_30_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.COP[4].tasa_baja.ingresos_faltantes") AS INT64) AS ingresos_faltantes_COP_30_baja,
+    -- UVR 20 BAJA
+    CAST(JSON_VALUE(uvr_20_baja, '$.tasa_baja.tasa') AS FLOAT64) AS tasa_UVR_20_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_20_baja, '$.tasa_baja.prestamo_maximo') AS FLOAT64)) AS INT64) AS MaximoPrestamo_UVR_20_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_20_baja, '$.tasa_baja.cuota') AS FLOAT64)) AS INT64) AS cuota_UVR_20_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_20_baja, '$.tasa_baja.ingresos_faltantes') AS FLOAT64)) AS INT64) AS ingresos_faltantes_UVR_20_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_20_baja, '$.tasa_baja.ingresos_ideales') AS FLOAT64)) AS INT64) AS ingresos_ideales_UVR_20_baja,
+    CAST(JSON_VALUE(uvr_20_baja, '$.tasa_baja.porc_capacidad_pago') AS FLOAT64) AS porc_capacidad_pago_UVR_20_baja,
+    CAST(JSON_VALUE(uvr_20_baja, '$.tasa_baja.relacion_cuota_ingresos') AS FLOAT64) AS relacion_cuota_ingresos_UVR_20_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_20_baja, '$.tasa_baja.total_gastos') AS FLOAT64)) AS INT64) AS total_gastos_UVR_20_baja,
 
-    ---------------------------------------------------------------------------
-    -- 9. DESGLOSE DE CUOTAS UVR (Recuerda: El orden es inverso a COP)
-    ---------------------------------------------------------------------------
-    -- UVR 15 Años - Tasa Mediana (Índice 0)
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[0].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64) AS MaximoPrestamo_UVR_15_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[0].tasa_mediana.cuota") AS INT64) AS cuota_UVR_15_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[0].tasa_mediana.tasa") AS FLOAT64) AS tasa_UVR_15_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[0].tasa_mediana.total_gastos") AS INT64) AS total_gastos_UVR_15_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[0].tasa_mediana.porc_capacidad_pago") AS FLOAT64) AS porc_capacidad_pago_UVR_15_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[0].tasa_mediana.relacion_cuota_ingresos") AS FLOAT64) AS relacion_cuota_ingresos_UVR_15_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[0].tasa_mediana.ingresos_ideales") AS INT64) AS ingresos_ideales_UVR_15_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[0].tasa_mediana.ingresos_faltantes") AS INT64) AS ingresos_faltantes_UVR_15_mediana,
+    -- UVR 20 MEDIANA
+    CAST(JSON_VALUE(uvr_20_mediana, '$.tasa_mediana.tasa') AS FLOAT64) AS tasa_UVR_20_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_20_mediana, '$.tasa_mediana.prestamo_maximo') AS FLOAT64)) AS INT64) AS MaximoPrestamo_UVR_20_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_20_mediana, '$.tasa_mediana.cuota') AS FLOAT64)) AS INT64) AS cuota_UVR_20_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_20_mediana, '$.tasa_mediana.ingresos_faltantes') AS FLOAT64)) AS INT64) AS ingresos_faltantes_UVR_20_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_20_mediana, '$.tasa_mediana.ingresos_ideales') AS FLOAT64)) AS INT64) AS ingresos_ideales_UVR_20_mediana,
+    CAST(JSON_VALUE(uvr_20_mediana, '$.tasa_mediana.porc_capacidad_pago') AS FLOAT64) AS porc_capacidad_pago_UVR_20_mediana,
+    CAST(JSON_VALUE(uvr_20_mediana, '$.tasa_mediana.relacion_cuota_ingresos') AS FLOAT64) AS relacion_cuota_ingresos_UVR_20_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_20_mediana, '$.tasa_mediana.total_gastos') AS FLOAT64)) AS INT64) AS total_gastos_UVR_20_mediana,
 
-    -- UVR 15 Años - Tasa Baja (Índice 1)
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[1].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS MaximoPrestamo_UVR_15_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[1].tasa_baja.cuota") AS INT64) AS cuota_UVR_15_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[1].tasa_baja.tasa") AS FLOAT64) AS tasa_UVR_15_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[1].tasa_baja.total_gastos") AS INT64) AS total_gastos_UVR_15_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[1].tasa_baja.porc_capacidad_pago") AS FLOAT64) AS porc_capacidad_pago_UVR_15_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[1].tasa_baja.relacion_cuota_ingresos") AS FLOAT64) AS relacion_cuota_ingresos_UVR_15_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[1].tasa_baja.ingresos_ideales") AS INT64) AS ingresos_ideales_UVR_15_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[1].tasa_baja.ingresos_faltantes") AS INT64) AS ingresos_faltantes_UVR_15_baja,
+    -- UVR 30 BAJA
+    CAST(JSON_VALUE(uvr_30_baja, '$.tasa_baja.tasa') AS FLOAT64) AS tasa_UVR_30_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_30_baja, '$.tasa_baja.prestamo_maximo') AS FLOAT64)) AS INT64) AS MaximoPrestamo_UVR_30_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_30_baja, '$.tasa_baja.cuota') AS FLOAT64)) AS INT64) AS cuota_UVR_30_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_30_baja, '$.tasa_baja.ingresos_faltantes') AS FLOAT64)) AS INT64) AS ingresos_faltantes_UVR_30_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_30_baja, '$.tasa_baja.ingresos_ideales') AS FLOAT64)) AS INT64) AS ingresos_ideales_UVR_30_baja,
+    CAST(JSON_VALUE(uvr_30_baja, '$.tasa_baja.porc_capacidad_pago') AS FLOAT64) AS porc_capacidad_pago_UVR_30_baja,
+    CAST(JSON_VALUE(uvr_30_baja, '$.tasa_baja.relacion_cuota_ingresos') AS FLOAT64) AS relacion_cuota_ingresos_UVR_30_baja,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_30_baja, '$.tasa_baja.total_gastos') AS FLOAT64)) AS INT64) AS total_gastos_UVR_30_baja,
 
-    -- UVR 20 Años - Tasa Mediana (Índice 2)
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[2].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64) AS MaximoPrestamo_UVR_20_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[2].tasa_mediana.cuota") AS INT64) AS cuota_UVR_20_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[2].tasa_mediana.tasa") AS FLOAT64) AS tasa_UVR_20_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[2].tasa_mediana.total_gastos") AS INT64) AS total_gastos_UVR_20_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[2].tasa_mediana.porc_capacidad_pago") AS FLOAT64) AS porc_capacidad_pago_UVR_20_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[2].tasa_mediana.relacion_cuota_ingresos") AS FLOAT64) AS relacion_cuota_ingresos_UVR_20_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[2].tasa_mediana.ingresos_ideales") AS INT64) AS ingresos_ideales_UVR_20_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[2].tasa_mediana.ingresos_faltantes") AS INT64) AS ingresos_faltantes_UVR_20_mediana,
+    -- UVR 30 MEDIANA
+    CAST(JSON_VALUE(uvr_30_mediana, '$.tasa_mediana.tasa') AS FLOAT64) AS tasa_UVR_30_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_30_mediana, '$.tasa_mediana.prestamo_maximo') AS FLOAT64)) AS INT64) AS MaximoPrestamo_UVR_30_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_30_mediana, '$.tasa_mediana.cuota') AS FLOAT64)) AS INT64) AS cuota_UVR_30_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_30_mediana, '$.tasa_mediana.ingresos_faltantes') AS FLOAT64)) AS INT64) AS ingresos_faltantes_UVR_30_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_30_mediana, '$.tasa_mediana.ingresos_ideales') AS FLOAT64)) AS INT64) AS ingresos_ideales_UVR_30_mediana,
+    CAST(JSON_VALUE(uvr_30_mediana, '$.tasa_mediana.porc_capacidad_pago') AS FLOAT64) AS porc_capacidad_pago_UVR_30_mediana,
+    CAST(JSON_VALUE(uvr_30_mediana, '$.tasa_mediana.relacion_cuota_ingresos') AS FLOAT64) AS relacion_cuota_ingresos_UVR_30_mediana,
+    CAST(ROUND(CAST(JSON_VALUE(uvr_30_mediana, '$.tasa_mediana.total_gastos') AS FLOAT64)) AS INT64) AS total_gastos_UVR_30_mediana
 
-    -- UVR 20 Años - Tasa Baja (Índice 3)
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[3].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS MaximoPrestamo_UVR_20_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[3].tasa_baja.cuota") AS INT64) AS cuota_UVR_20_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[3].tasa_baja.tasa") AS FLOAT64) AS tasa_UVR_20_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[3].tasa_baja.total_gastos") AS INT64) AS total_gastos_UVR_20_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[3].tasa_baja.porc_capacidad_pago") AS FLOAT64) AS porc_capacidad_pago_UVR_20_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[3].tasa_baja.relacion_cuota_ingresos") AS FLOAT64) AS relacion_cuota_ingresos_UVR_20_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[3].tasa_baja.ingresos_ideales") AS INT64) AS ingresos_ideales_UVR_20_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[3].tasa_baja.ingresos_faltantes") AS INT64) AS ingresos_faltantes_UVR_20_baja,
-
-    -- UVR 30 Años - Tasa Mediana (Índice 4)
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[4].tasa_mediana.prestamo_maximo_segun_disponible") AS INT64) AS MaximoPrestamo_UVR_30_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[4].tasa_mediana.cuota") AS INT64) AS cuota_UVR_30_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[4].tasa_mediana.tasa") AS FLOAT64) AS tasa_UVR_30_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[4].tasa_mediana.total_gastos") AS INT64) AS total_gastos_UVR_30_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[4].tasa_mediana.porc_capacidad_pago") AS FLOAT64) AS porc_capacidad_pago_UVR_30_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[4].tasa_mediana.relacion_cuota_ingresos") AS FLOAT64) AS relacion_cuota_ingresos_UVR_30_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[4].tasa_mediana.ingresos_ideales") AS INT64) AS ingresos_ideales_UVR_30_mediana,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[4].tasa_mediana.ingresos_faltantes") AS INT64) AS ingresos_faltantes_UVR_30_mediana,
-
-    -- UVR 30 Años - Tasa Baja (Índice 5)
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[5].tasa_baja.prestamo_maximo_segun_disponible") AS INT64) AS MaximoPrestamo_UVR_30_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[5].tasa_baja.cuota") AS INT64) AS cuota_UVR_30_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[5].tasa_baja.tasa") AS FLOAT64) AS tasa_UVR_30_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[5].tasa_baja.total_gastos") AS INT64) AS total_gastos_UVR_30_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[5].tasa_baja.porc_capacidad_pago") AS FLOAT64) AS porc_capacidad_pago_UVR_30_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[5].tasa_baja.relacion_cuota_ingresos") AS FLOAT64) AS relacion_cuota_ingresos_UVR_30_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[5].tasa_baja.ingresos_ideales") AS INT64) AS ingresos_ideales_UVR_30_baja,
-    SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuotas.UVR[5].tasa_baja.ingresos_faltantes") AS INT64) AS ingresos_faltantes_UVR_30_baja
-
-FROM raw_data
+FROM agnostic_objects
