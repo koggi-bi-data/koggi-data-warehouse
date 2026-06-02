@@ -49,7 +49,7 @@ SELECT
   COALESCE(q.name, 'Sin Calificación') AS calificacion_medalla,
   COALESCE(sd.decision, fct.decision_motor_raw, 'Pendiente') AS estado_viabilidad,
   fct.score_motor,
-  COALESCE(sd.rangeText, CONCAT(CAST(sd.minScore AS STRING), ' - ', CAST(sd.maxScore AS STRING))) AS rango_score,
+  COALESCE(CONCAT(CAST(sd.minScore AS STRING), ' - ', CAST(sd.maxScore AS STRING)), sd.rangeText) AS rango_score,
   
   -- Rango SMMLV Dinámico
   COALESCE(
