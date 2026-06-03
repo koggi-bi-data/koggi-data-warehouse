@@ -4,7 +4,7 @@ config {
     name: "stg_hdc_parsed",
     description: "Capa Silver: Staging de HDC. Extracción plana del nodo summary. Granularidad 1:1 estricta para cruce seguro con OBT.",
     uniqueKey: ["id_hdc"],
-    // tags: ["staging", "diario"],
+    tags: ["staging", "diario"],
     bigquery: {
         partitionBy: "DATE(fecha_consulta_hdc)",
         clusterBy: ["identificacion"]
