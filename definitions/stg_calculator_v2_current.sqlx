@@ -131,6 +131,7 @@ SELECT
     CAST(JSON_VALUE(json_data, '$.koggiBankParams.maximumToFinance') AS FLOAT64) AS bank_max_to_finance,
     
     -- Capacidades Globales
+    CAST(ROUND(CAST(JSON_VALUE(json_data, '$.cuotas_titular') AS FLOAT64)) AS INT64) AS cuotas_titular,
     CAST(ROUND(CAST(JSON_VALUE(json_data, '$.cuota_minima_disponible') AS FLOAT64)) AS INT64) AS cuota_minima_disponible,
     CAST(ROUND(CAST(JSON_VALUE(json_data, '$.disponible_cuota_segun_ingresos') AS FLOAT64)) AS INT64) AS disponible_cuota_segun_ingresos,
     CAST(ROUND(CAST(JSON_VALUE(json_data, '$.maximo_cuota_ley_vivienda') AS FLOAT64)) AS INT64) AS maximo_cuota_ley_vivienda,

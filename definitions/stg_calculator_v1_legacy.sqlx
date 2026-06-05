@@ -85,6 +85,7 @@ SELECT
     SAFE_CAST(NULL AS FLOAT64) AS bank_max_to_finance,
     
     -- Capacidades Globales
+    SAFE_CAST(ROUND(SAFE_CAST(JSON_EXTRACT_SCALAR(data, '$.cuotas_titular') AS FLOAT64)) AS INT64) AS cuotas_titular,    
     SAFE_CAST(ROUND(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.cuota_minima_disponible") AS FLOAT64)) AS INT64) AS cuota_minima_disponible,
     SAFE_CAST(ROUND(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.disponible_cuota_segun_ingresos") AS FLOAT64)) AS INT64) AS disponible_cuota_segun_ingresos,
     SAFE_CAST(ROUND(SAFE_CAST(JSON_EXTRACT_SCALAR(data, "$.maximo_cuota_ley_vivienda") AS FLOAT64)) AS INT64) AS maximo_cuota_ley_vivienda,
