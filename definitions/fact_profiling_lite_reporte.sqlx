@@ -85,7 +85,7 @@ CROSS JOIN current_smlv smlv
 LEFT JOIN ${ref("tbl_entity_database")} ed 
   ON fct.builderkey = ed.id_entity_database
 LEFT JOIN ${ref("tbl_looker_board")} lb 
-  ON ed.id_entity = lb.entity_id
+  ON ed.id_entity_database = lb.entity_id
 LEFT JOIN ${ref("tbl_builder_projects")} p 
   ON fct.project_id = p.id
 LEFT JOIN ${ref("tbl_user")} u 
