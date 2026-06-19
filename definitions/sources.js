@@ -241,6 +241,20 @@ declare({
   description: "Tabla Hechos Ledas - Profiling LITE"
 });
 
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col_stream",
+  name: "tbl_sq_leads_followup",
+  description: "Tabla cruda que registra las interacciones y estados de seguimiento (follow-up) de los leads."
+});
+
+declare({
+  database: "davinci-onegroup-prod",
+  schema: "central_col_stream",
+  name: "tbl_sq_followup_states",
+  description: "Tabla de parametria cruda que mapea los códigos de estado de seguimiento con sus etiquetas textuales correspondientes."
+});
+
 // --- NUEVO ENTORNO: STREAM (SHADOW TEST) ---
 
 // declare({

@@ -1,0 +1,259 @@
+config {
+    type: "table",
+    schema: "BI",
+    name: "fact_leads_followup",
+    tags: ["gold", "followup", "looker"],
+    description: "Tabla maestra de hechos que calcula el delta de evolución entre el perfilamiento inicial (Pro) y el último seguimiento registrado para cada lead.",
+    bigquery: {
+        partitionBy: "fecha_original",
+        clusterBy: ["id_lead", "constructora"]
+    },
+    assertions: {
+        uniqueKey: ["id_lead"],
+        nonNull: ["id_lead", "fecha_original", "identificacion"]
+    }
+}
+
+WITH usuarios_unicos AS (
+  SELECT
+    id AS user_id_puro,
+    email,
+    entity_key,
+    name,
+    id_group,
+    ROW_NUMBER() OVER(PARTITION BY email, entity_key ORDER BY id DESC) as rn
+  FROM ${ref("tbl_user")}
+  WHERE entity_key IS NOT NULL 
+),
+
+raw_events AS (
+  SELECT
+    cal.fecha_registro,
+    cal.id_lead,
+    cal.identificacion,
+    cal.ocupacion,
+    cal.nombre_completo,
+    cal.edad_aproximada,
+    cal.ingresos_estimados,
+    cal.cuotas_titular AS cal_cuotas_titular,
+    cal.endeudamiento_financiero,
+    cal.proyecto,
+    cal.ciudad_proyecto,
+    cal.constructora,
+    cal.tipo_vivienda,
+    
+    -- Normalización de Fechas de Entrega heredada
+    COALESCE(
+      SAFE.PARSE_DATE('%Y-%m-%d', CAST(cal.fecha_entrega_inmueble AS STRING)),
+      SAFE.PARSE_DATE('%d/%m/%Y', CAST(cal.fecha_entrega_inmueble AS STRING)),
+      SAFE.PARSE_DATE('%Y/%m/%d', CAST(cal.fecha_entrega_inmueble AS STRING)),
+      SAFE.PARSE_DATE('%m-%d-%Y', CAST(cal.fecha_entrega_inmueble AS STRING)),
+      SAFE.PARSE_DATE('%d-%m-%Y', CAST(cal.fecha_entrega_inmueble AS STRING)),
+      SAFE.PARSE_DATE('%Y.%m.%d', CAST(cal.fecha_entrega_inmueble AS STRING))
+    ) AS fecha_entrega_inmueble,
+
+    cal.valor_inmueble,
+    cal.valor_credito,
+    cal.score,
+    cal.calificacion_sugerida,
+    cal.koggi_profiling,
+    cal.indicador_endeudamiento_financiero,
+    cal.disponible_cuota_segun_ingresos,
+    cal.relacion_cuota_ingresos_COP_20_baja,
+    cal.maximo_cuota_ley_vivienda,
+    cal.credito_maximo_segun_disponible_COP,
+    cal.credito_maximo_segun_disponible_UVR,
+    cal.es_followup_origen,
+    cal.document_id,
+    ld.venta_efectiva,
+    st.label AS label_estado,
+    sc.ingresos AS sc_ingresos,
+    sc.endeudamiento AS sc_endeudamiento,
+    sc.capacidad_pago AS sc_capacidad_pago,
+    sc.decision AS decision_score,
+    sc.cuotas_titular AS sc_cuotas_titular,
+    hdc.creditos_negativos,
+    hdc.creditos_vigentes,
+    hdc.saldo_en_mora,
+    hdc.saldo_total,
+    hdc.cuota_mensual_total,
+    fw.id AS fw_id,
+    fw.score_id AS fw_score_id,
+    fw.hdc_id AS fw_hdc_id,
+    fw.calculator_id AS fw_calculator_id,
+    fw.laft_id AS fw_laft_id,
+    l_src.createdEmail AS email_creador,
+    look.uid_entity AS uid_looker,
+
+    IFNULL(u_orig.name, 'DEFAULT') AS usuario_original,
+    IFNULL(UPPER(g_orig.name), 'DEFAULT') AS tipo_usuario_original,
+    
+    COALESCE(u_fw.name, u_orig.name, 'DEFAULT') AS usuario_seguimiento,
+    COALESCE(UPPER(g_fw.name), UPPER(g_orig.name), 'DEFAULT') AS tipo_usuario_seguimiento,
+
+    ROW_NUMBER() OVER (
+      PARTITION BY cal.id_lead 
+      ORDER BY cal.fecha_registro ASC
+    ) AS paso_n
+
+  FROM ${ref("tbl_calculator_master_v2")} cal
+  LEFT JOIN ${ref("tbl_sq_leads")} l_src
+    ON l_src.id = cal.id_lead
+  LEFT JOIN ${ref("tbl_sq_leads_followup")} fw
+    ON fw.calculator_id = cal.document_id
+  LEFT JOIN ${ref("tbl_sq_followup_states")} st
+    ON fw.state = st.code
+  LEFT JOIN ${ref("tbl_sq_score_validity")} sc
+    ON fw.score_id = sc.id
+  LEFT JOIN ${ref("stg_hdc_parsed")} hdc
+    ON SAFE_CAST(fw.hdc_id AS STRING) = hdc.id_hdc
+  LEFT JOIN ${ref("stg_leads")} ld
+    ON SAFE_CAST(ld.id_lead AS INT64) = cal.id_lead
+  LEFT JOIN usuarios_unicos u_orig
+    ON l_src.createdEmail = u_orig.email
+    AND cal.constructora = u_orig.entity_key
+    AND u_orig.rn = 1
+  LEFT JOIN ${ref("tbl_groups")} g_orig
+    ON u_orig.id_group = g_orig.id
+  LEFT JOIN usuarios_unicos u_fw
+    ON SAFE_CAST(fw.user_id AS STRING) = SAFE_CAST(u_fw.user_id_puro AS STRING) 
+    AND u_fw.rn = 1
+  LEFT JOIN ${ref("tbl_groups")} g_fw
+    ON u_fw.id_group = g_fw.id
+  LEFT JOIN ${ref("tbl_entity_database")} ent
+    ON cal.constructora = ent.key
+  LEFT JOIN ${ref("tbl_looker_board")} look
+    ON ent.id_entity_database = look.entity_id
+  WHERE cal.id_lead IS NOT NULL AND cal.id_lead != 0
+),
+
+registro_original AS (
+  SELECT * FROM (
+    SELECT *, ROW_NUMBER() OVER(PARTITION BY id_lead ORDER BY fecha_registro ASC) AS rn_orig
+    FROM raw_events
+    WHERE es_followup_origen = FALSE
+  ) WHERE rn_orig = 1
+),
+
+ultimo_seguimiento AS (
+  SELECT * FROM (
+    SELECT *, ROW_NUMBER() OVER(PARTITION BY id_lead ORDER BY fecha_registro DESC) AS rn_ult
+    FROM raw_events
+    WHERE es_followup_origen = TRUE
+  ) WHERE rn_ult = 1
+)
+
+SELECT
+  -- ================================================================
+  -- DATOS ESTÁTICOS Y DESCRIPTIVOS
+  -- ================================================================
+  curr.id_lead,
+  curr.identificacion,
+  curr.nombre_completo,
+  curr.uid_looker,
+  curr.proyecto,
+  curr.ciudad_proyecto,
+  curr.constructora,
+  curr.tipo_vivienda,
+  curr.venta_efectiva,
+  curr.label_estado AS label_actual,
+  curr.fw_id AS id_seguimiento,
+  curr.paso_n AS total_seguimientos_realizados,
+
+  -- DENOMINADOR PARA LOOKER STUDIO
+  COUNT(curr.id_lead) OVER(PARTITION BY prior.calificacion_sugerida) AS total_leads_calificacion_inicial,
+  
+  -- ================================================================
+  -- DATOS DEL ESTADO ACTUAL (Seguimiento más reciente)
+  -- ================================================================
+  curr.fecha_registro AS fecha_actual,
+  curr.ocupacion AS ocupacion_actual,
+  curr.edad_aproximada AS edad_aproximada_actual,
+  curr.ingresos_estimados AS ingresos_estimados_actual,
+  curr.cal_cuotas_titular AS cuotas_titular_actual,
+  curr.endeudamiento_financiero AS endeudamiento_financiero_actual,
+  curr.fecha_entrega_inmueble AS fecha_entrega_inmueble_actual,
+  curr.valor_inmueble AS valor_inmueble_actual,
+  curr.valor_credito AS valor_credito_actual,
+  curr.score AS score_actual,
+  curr.calificacion_sugerida AS calificacion_sugerida_actual,
+  curr.koggi_profiling AS koggi_profiling_actual,
+  curr.indicador_endeudamiento_financiero AS indicador_endeudamiento_financiero_actual,
+  curr.disponible_cuota_segun_ingresos AS disponible_cuota_segun_ingresos_actual,
+  curr.relacion_cuota_ingresos_COP_20_baja AS relacion_cuota_ingresos_actual,
+  curr.maximo_cuota_ley_vivienda AS maximo_cuota_ley_vivienda_actual,
+  curr.credito_maximo_segun_disponible_COP AS credito_maximo_segun_disponible_COP_actual,
+  curr.credito_maximo_segun_disponible_UVR AS credito_maximo_segun_disponible_UVR_actual,
+  curr.cuota_mensual_total AS cuota_mensual_total_actual,
+  curr.saldo_total AS saldo_total_actual,
+
+  CASE 
+    WHEN curr.score BETWEEN 651 AND 999 THEN 'VERDE (651 - 999)'
+    WHEN curr.score BETWEEN 581 AND 650 THEN 'AMARILLO (581 - 650)'
+    WHEN curr.score >= 0 AND curr.score <= 580 THEN 'ROJO (0 - 580)'
+    ELSE 'NO REGISTRA' 
+  END AS calificacion_actual,
+
+  -- ================================================================
+  -- DATOS ORIGINALES (Línea Base del Lead)
+  -- ================================================================
+  prior.fecha_registro AS fecha_original,
+  prior.ocupacion AS ocupacion_original,
+  prior.edad_aproximada AS edad_aproximada_original,
+  prior.ingresos_estimados AS ingresos_estimados_original,
+  prior.cal_cuotas_titular AS cuotas_titular_original,
+  prior.endeudamiento_financiero AS endeudamiento_financiero_original,
+  prior.fecha_entrega_inmueble AS fecha_entrega_inmueble_original,
+  prior.valor_inmueble AS valor_inmueble_original,
+  prior.valor_credito AS valor_credito_original,
+  prior.score AS score_original,
+  prior.calificacion_sugerida AS calificacion_sugerida_original,
+  prior.koggi_profiling AS koggi_profiling_original,
+  prior.indicador_endeudamiento_financiero AS indicador_endeudamiento_financiero_original,
+  prior.disponible_cuota_segun_ingresos AS disponible_cuota_segun_ingresos_original,
+  prior.relacion_cuota_ingresos_COP_20_baja AS relacion_cuota_ingresos_original,
+  prior.maximo_cuota_ley_vivienda AS maximo_cuota_ley_vivienda_original,
+  prior.credito_maximo_segun_disponible_COP AS credito_maximo_segun_disponible_COP_original,
+  prior.credito_maximo_segun_disponible_UVR AS credito_maximo_segun_disponible_UVR_original,
+  prior.cuota_mensual_total AS cuota_mensual_total_original,
+  prior.saldo_total AS saldo_total_original,
+
+  CASE 
+    WHEN prior.score BETWEEN 651 AND 999 THEN 'VERDE (651 - 999)'
+    WHEN prior.score BETWEEN 581 AND 650 THEN 'AMARILLO (581 - 650)'
+    WHEN prior.score >= 0 AND prior.score <= 580 THEN 'ROJO (0 - 580)'
+    ELSE 'NO REGISTRA' 
+  END AS calificacion_original,
+
+  -- ================================================================
+  -- ATRIBUCIÓN DE USUARIOS
+  -- ================================================================
+  curr.email_creador,
+  curr.usuario_original AS usuario_creador,
+  curr.tipo_usuario_original AS tipo_usuario_creador,
+  curr.usuario_seguimiento AS usuario_ultimo_ejecutor,
+  curr.tipo_usuario_seguimiento AS tipo_usuario_ultimo_ejecutor,
+  prior.usuario_seguimiento AS usuario_ejecutor_original,
+  prior.tipo_usuario_seguimiento AS tipo_usuario_ejecutor_original,
+
+  -- ================================================================
+  -- MÉTRICAS DE EVOLUCIÓN DIRECTA (Deltas)
+  -- ================================================================
+  (curr.edad_aproximada - prior.edad_aproximada) AS delta_edad_aproximada,
+  (curr.ingresos_estimados - prior.ingresos_estimados) AS delta_ingresos,
+  (curr.cal_cuotas_titular - prior.cal_cuotas_titular) AS delta_cuotas_titular,
+  (curr.endeudamiento_financiero - prior.endeudamiento_financiero) AS delta_endeudamiento_financiero,
+  (curr.valor_inmueble - prior.valor_inmueble) AS delta_valor_inmueble,
+  (curr.valor_credito - prior.valor_credito) AS delta_valor_credito,
+  (curr.score - prior.score) AS delta_score,
+  (curr.disponible_cuota_segun_ingresos - prior.disponible_cuota_segun_ingresos) AS delta_disponible_cuota_segun_ingresos,
+  (curr.relacion_cuota_ingresos_COP_20_baja - prior.relacion_cuota_ingresos_COP_20_baja) AS delta_relacion_cuota_ingresos,
+  (curr.maximo_cuota_ley_vivienda - prior.maximo_cuota_ley_vivienda) AS delta_maximo_cuota_ley_vivienda,
+  (curr.credito_maximo_segun_disponible_COP - prior.credito_maximo_segun_disponible_COP) AS delta_credito_maximo_COP,
+  (curr.credito_maximo_segun_disponible_UVR - prior.credito_maximo_segun_disponible_UVR) AS delta_credito_maximo_UVR,
+  (curr.cuota_mensual_total - prior.cuota_mensual_total) AS delta_cuota_mensual_total,
+  TIMESTAMP_DIFF(curr.fecha_registro, prior.fecha_registro, DAY) AS dias_transcurridos_totales
+
+FROM ultimo_seguimiento curr
+INNER JOIN registro_original prior 
+  ON curr.id_lead = prior.id_lead
