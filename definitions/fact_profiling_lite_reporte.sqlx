@@ -75,6 +75,23 @@ SELECT
   fct.cuota_inicial,
   fct.max_credito_pesos,
   fct.max_credito_uvr,
+  COALESCE(
+    CASE
+        WHEN SAFE_DIVIDE(fct.max_credito_pesos, fct.valor_credito) <= 0.7 THEN '≤ 70%'
+        WHEN SAFE_DIVIDE(fct.max_credito_pesos, fct.valor_credito) < 0.95 THEN '70% a 95%'
+        WHEN SAFE_DIVIDE(fct.max_credito_pesos, fct.valor_credito) >= 0.95 THEN '≥ 95%'
+        ELSE NULL
+    END, 'Sin Información'
+  ) as rango_credito_max_pesos,
+  
+  COALESCE(
+    CASE
+        WHEN SAFE_DIVIDE(fct.max_credito_uvr, fct.valor_credito) <= 0.7 THEN '≤ 70%'
+        WHEN SAFE_DIVIDE(fct.max_credito_uvr, fct.valor_credito) < 0.95 THEN '70% a 95%'
+        WHEN SAFE_DIVIDE(fct.max_credito_uvr, fct.valor_credito) >= 0.95 THEN '≥ 95%'
+        ELSE NULL
+    END, 'Sin Información'
+  ) as rango_credito_max_uvr,
   
   -- Flags Analíticos
   fct.flag_financiero,
