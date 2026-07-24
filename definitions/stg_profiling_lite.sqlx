@@ -39,9 +39,9 @@ SELECT
   CAST(f.maximumCreditAccordingToAvailableUvr AS FLOAT64) AS max_credito_uvr,
   
   -- Hechos: Motor de Decisión
-  CAST(d.scoring AS INT64) AS score_motor,
-  CAST(d.income AS FLOAT64) AS ingresos_validados,
-  CAST(d.indebtedness AS FLOAT64) AS endeudamiento,
+  SAFE_CAST(NULLIF(TRIM(d.scoring), '') AS INT64) AS score_motor,
+  SAFE_CAST(NULLIF(TRIM(d.income), '') AS FLOAT64) AS ingresos_validados,
+  SAFE_CAST(NULLIF(TRIM(d.indebtedness), '') AS FLOAT64) AS endeudamiento,
   d.decision AS decision_motor_raw,
   
   -- Flags de completitud
