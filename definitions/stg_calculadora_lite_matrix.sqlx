@@ -1,7 +1,8 @@
 config {
     type: "table",
     schema: "BI",
-    // tags: ["profiling", "lite", "finance_matrix"],
+    tags: ["profiling", "lite", "finance_matrix"],
+    disabled: true,
     description: "Anexo Financiero. Parsing único + Lógica de Negocio + Redondeo a 2 decimales.",
     bigquery: {
         partitionBy: "DATE(timestamp_registro)",

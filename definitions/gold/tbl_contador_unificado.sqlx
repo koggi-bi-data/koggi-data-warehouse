@@ -1,0 +1,211 @@
+config {
+    type: "incremental",
+    schema: "BI",
+    name: "tbl_contador_unificado",
+    description: "Consolidado de interacciones analíticas unificando flujos de leads Pro, Lite v1, Lite v2 y seguimientos. Versión Incremental Segura.",
+    tags: ["diario"],
+    uniqueKey: ["id", "tipo_interaccion"], 
+    bigquery: {
+        partitionBy: "fecha_evento",
+        clusterBy: ["constructora", "email"]
+    }
+}
+
+WITH 
+  usuarios_unicos AS (
+    SELECT 
+      id, 
+      email, 
+      entity_key, 
+      name, 
+      id_group
+    FROM ${ref("tbl_user")}
+    WHERE email IS NOT NULL AND entity_key IS NOT NULL
+    QUALIFY ROW_NUMBER() OVER(PARTITION BY email, entity_key ORDER BY id DESC) = 1
+  ),
+
+  grupos_usuarios AS (
+    SELECT 
+      u.email, 
+      u.entity_key, 
+      u.name, 
+      UPPER(g.name) AS tipo_usuario
+    FROM usuarios_unicos u
+    LEFT JOIN ${ref("tbl_groups")} g 
+      ON u.id_group = g.id
+  ),
+
+  proyectos_por_id AS (
+    SELECT 
+      id,
+      name,
+      city,
+      sector,
+      zone
+    FROM ${ref("tbl_builder_projects")}
+    WHERE name IS NOT NULL
+    QUALIFY ROW_NUMBER() OVER(PARTITION BY id ORDER BY id DESC) = 1
+  ),
+
+  proyectos_por_nombre AS (
+    SELECT 
+      name,
+      city,
+      sector,
+      zone
+    FROM proyectos_por_id
+    QUALIFY ROW_NUMBER() OVER(PARTITION BY name ORDER BY id DESC) = 1
+  ),
+
+  -- Optimizamos el consumo de BigQuery aplicando el filtro incremental 'updated/createdAt' de 3 días dentro de cada CTE origen
+  leads_lite_v1 AS (
+    SELECT
+      CAST(l.id AS STRING) AS id_origen,
+      CAST(REGEXP_REPLACE(l.identification, r'\.', '') AS INT64) AS identificacion,
+      CAST(NULL AS STRING) AS id_lead_pro, 
+      DATE(TIMESTAMP(l.createdAt), "America/Bogota") AS fecha_evento,
+      CAST(l.builderkey AS STRING) AS builderkey,
+      CAST(l.createdEmail AS STRING) AS createdEmail,
+      CAST(l.preselectaStatus AS STRING) AS preselectaStatus,
+      'LITE V1' AS tipo_interaccion,
+      FALSE AS es_followup_flag,
+      CAST(0 AS INT64) AS contador_sq_snapshot,
+      CAST(proj.name AS STRING) AS proyecto,
+      CAST(proj.city AS STRING) AS ciudad_proyecto,
+      CAST(NULL AS STRING) AS calificacion,
+      CAST(NULL AS INT64) AS venta_efectiva
+    FROM ${ref("tbl_sq_leads_light")} l
+    LEFT JOIN proyectos_por_id proj 
+      ON l.idProject = proj.id
+    ${when(incremental(), `WHERE DATE(l.createdAt) >= CURRENT_DATE() - INTERVAL 3 DAY`)}
+  ),
+
+  leads_lite_v2 AS (
+    SELECT
+      CAST(l.id AS STRING) AS id_origen,
+      CAST(REGEXP_REPLACE(l.identification, r'\.', '') AS INT64) AS identificacion,
+      CAST(NULL AS STRING) AS id_lead_pro, 
+      DATE(TIMESTAMP(l.createdAt), "America/Bogota") AS fecha_evento,
+      CAST(en.key AS STRING) AS builderkey, 
+      CAST(u.email AS STRING) AS createdEmail,
+      CAST(NULL AS STRING) AS preselectaStatus, 
+      'LITE V2' AS tipo_interaccion,
+      FALSE AS es_followup_flag,
+      CAST(0 AS INT64) AS contador_sq_snapshot,
+      CAST(proj.name AS STRING) AS proyecto,
+      CAST(proj.city AS STRING) AS ciudad_proyecto,
+      CAST(NULL AS STRING) AS calificacion,
+      CAST(NULL AS INT64) AS venta_efectiva
+    FROM ${ref("tbl_sq_leads_lite")} l
+    LEFT JOIN ${ref("tbl_entity_database")} en 
+      ON l.builderId = en.id_entity_database
+    LEFT JOIN ${ref("tbl_user")} u 
+      ON l.userId = u.id
+    LEFT JOIN proyectos_por_id proj 
+      ON l.projectId = proj.id
+    ${when(incremental(), `WHERE DATE(l.createdAt) >= CURRENT_DATE() - INTERVAL 3 DAY`)}
+  ),
+
+  leads_pro AS (
+    SELECT
+      CAST(id AS STRING) AS id_origen,
+      CAST(REGEXP_REPLACE(identification, r'\.', '') AS INT64) AS identificacion,
+      CAST(id AS STRING) AS id_lead_pro,
+      DATE(TIMESTAMP(createdAt), "America/Bogota") AS fecha_evento,
+      CAST(builderkey AS STRING) AS builderkey,
+      CAST(createdEmail AS STRING) AS createdEmail,
+      CAST(preselectaStatus AS STRING) AS preselectaStatus,
+      'PRO' AS tipo_interaccion,
+      FALSE AS es_followup_flag,
+      CAST(IFNULL(followUpCounter, 0) AS INT64) AS contador_sq_snapshot,
+      CAST(projectName AS STRING) AS proyecto,
+      CAST(projectCity AS STRING) AS ciudad_proyecto,
+      CAST(qualification AS STRING) AS calificacion,
+      CAST(venta_efectiva AS INT64) AS venta_efectiva
+    FROM ${ref("tbl_sq_leads")}
+    ${when(incremental(), `WHERE DATE(updated_at_auto) >= CURRENT_DATE() - INTERVAL 3 DAY`)}
+  ),
+
+  followups_unificados AS (
+    SELECT
+      CAST(c.id_lead AS STRING) AS id_origen,
+      CAST(REGEXP_REPLACE(CAST(c.identificacion AS STRING), r'\.', '') AS INT64) AS identificacion,
+      l.id_lead_pro,
+      DATE(TIMESTAMP(c.timestamp), "America/Bogota") AS fecha_evento,
+      CAST(COALESCE(l.builderkey, c.constructora) AS STRING) AS builderkey,
+      l.createdEmail,
+      l.preselectaStatus,
+      CASE 
+        WHEN l.id_lead_pro IS NOT NULL THEN 'FOLLOW UP' 
+        ELSE 'REGISTRO PERDIDO' 
+      END AS tipo_interaccion,
+      CAST(c.es_followup_origen AS BOOL) AS es_followup_flag,
+      l.contador_sq_snapshot,
+      l.proyecto,
+      l.ciudad_proyecto,
+      l.calificacion,
+      l.venta_efectiva
+    FROM ${ref("tbl_calculator_master_v2")} c 
+    LEFT JOIN leads_pro l 
+      ON CAST(c.id_lead AS STRING) = l.id_lead_pro
+    WHERE c.es_followup_origen = TRUE 
+      ${when(incremental(), `AND DATE(c.timestamp) >= CURRENT_DATE() - INTERVAL 3 DAY`)}
+  ),
+
+  total_eventos AS (
+    SELECT * FROM leads_lite_v1
+    UNION ALL
+    SELECT * FROM leads_lite_v2
+    UNION ALL
+    SELECT * FROM leads_pro
+    UNION ALL
+    SELECT * FROM followups_unificados
+  )
+
+SELECT
+  e.id_origen AS id,
+  e.fecha_evento,
+  DATE_TRUNC(e.fecha_evento, MONTH) AS mes_ano,
+  CASE EXTRACT(DAYOFWEEK FROM e.fecha_evento)
+    WHEN 1 THEN 'Domingo' WHEN 2 THEN 'Lunes' WHEN 3 THEN 'Martes'
+    WHEN 4 THEN 'Miércoles' WHEN 5 THEN 'Jueves' WHEN 6 THEN 'Viernes'
+    WHEN 7 THEN 'Sábado'
+  END AS dia_nombre,
+  e.identificacion,
+  e.builderkey AS constructora,
+  CONCAT(CAST(e.identificacion AS STRING), "_", e.builderkey) AS llave,
+  e.createdemail AS email,
+  e.preselectastatus,
+  e.tipo_interaccion,
+  e.es_followup_flag,
+  e.contador_sq_snapshot,
+  
+  e.proyecto,
+  e.ciudad_proyecto,
+  proj.city AS ciudad_homologada,
+  proj.sector AS sector,
+  proj.zone AS zona,
+  
+  e.calificacion,
+  CASE WHEN e.venta_efectiva = 1 THEN 'Si' ELSE 'No' END AS ventas_efectivas,
+  
+  IFNULL(usr.name, 'Usuario No Registrado') AS nombre_usuario,
+  IFNULL(usr.tipo_usuario, 'Sin Grupo') AS tipo_usuario,
+  CASE
+    WHEN e.createdEmail LIKE '%@koggi.co%' THEN 'Interno' 
+    ELSE 'Externo'
+  END AS origen_usuario,
+  
+  look.uid_entity AS uid_looker,
+  
+  1 AS cantidad_eventos
+FROM total_eventos e
+LEFT JOIN grupos_usuarios usr
+  ON e.createdEmail = usr.email 
+  AND e.builderkey = usr.entity_key
+LEFT JOIN proyectos_por_nombre proj 
+  ON e.proyecto = proj.name
+LEFT JOIN ${ref("tbl_entity_database")} ent 
+  ON e.builderkey = ent.key
+LEFT JOIN ${ref("tbl_looker_board")} look 
+  ON ent.id_entity_database = look.entity_id

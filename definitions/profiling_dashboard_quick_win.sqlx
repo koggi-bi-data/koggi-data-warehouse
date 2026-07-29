@@ -2,7 +2,8 @@ config {
   type: "incremental",
   schema: "BI",
   name: "profiling_dashboard_quick_win",
-  // tags: ["dashboard", "diario"],
+  tags: ["dashboard", "diario"],
+  disabled: true,
   uniqueKey: ["lead_id"],
   description: "Quick Win V2: Paridad 1:1 con la tabla Legacy garantizada.",
   bigquery: {

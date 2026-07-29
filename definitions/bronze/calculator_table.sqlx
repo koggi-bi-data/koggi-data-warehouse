@@ -2,7 +2,8 @@ config {
     type: "incremental",
     schema: "firestore_calculator",
     name: "Calculator_table",
-    // tags: ["diario"],
+    tags: ["diario"],
+    disabled: true,
     description: "Tabla Calculadora Maestra V5.1. Versión TEST Incremental pura (sin RN físico).",
     bigquery: {
         partitionBy: "fecha_registro",
