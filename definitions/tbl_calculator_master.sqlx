@@ -2,7 +2,8 @@ config {
     type: "incremental",
     schema: "BI",
     name: "tbl_calculator_master",
-//    tags: ["diario"],
+    tags: ["diario"],
+    disabled: true,
     uniqueKey: ["event_id"],
     description: "Tabla Silver Maestra V10 (SCD Tipo 2) con herencia de Seguridad Looker.",
     bigquery: {

@@ -1,0 +1,95 @@
+config {
+    type: "incremental",
+    schema: "BI",
+    name: "fact_leads_atribucion",
+    description: "Tabla de hechos de leads con enriquecimiento de atribución de asesores, proyectos y seguridad RLS. Versión Incremental Segura.",
+    tags: ["diario"],
+    uniqueKey: ["id_lead"], 
+    bigquery: {
+        partitionBy: "fecha",
+        clusterBy: ["constructora", "proyecto"]
+    }
+}
+
+WITH
+  leads_preparados AS (
+    SELECT
+      id AS id_lead, 
+      CASE EXTRACT(DAYOFWEEK FROM createdAt)
+        WHEN 1 THEN 'Domingo' WHEN 2 THEN 'Lunes' WHEN 3 THEN 'Martes'
+        WHEN 4 THEN 'Miércoles' WHEN 5 THEN 'Jueves' WHEN 6 THEN 'Viernes'
+        WHEN 7 THEN 'Sábado'
+      END AS dia_nombre,
+      DATE(createdAt) AS fecha,
+      CASE 
+        WHEN createdEmail LIKE '%koggi.co%' THEN 'Koggi' 
+        ELSE 'Constructora' 
+      END AS origen,
+      projectName AS proyecto,
+      projectCity AS ciudad_proyecto,
+      builderKey AS constructora,
+      qualification AS calificacion,
+      createdEmail,
+      venta_efectiva,
+      updated_at_auto
+    FROM ${ref("tbl_sq_leads")}
+    -- Ventana incremental de 3 días 
+    ${when(incremental(), `WHERE DATE(updated_at_auto) >= CURRENT_DATE() - INTERVAL 3 DAY`)}
+  ),
+
+  usuarios_unicos AS (
+    SELECT
+      id,
+      email,
+      entity_key,
+      name,
+      id_group,
+      ROW_NUMBER() OVER(PARTITION BY email, entity_key ORDER BY id DESC) as rn
+    FROM ${ref("tbl_user")}
+    WHERE email IS NOT NULL AND entity_key IS NOT NULL
+  ),
+
+  proyectos_unicos AS (
+    SELECT
+      name,
+      city,
+      sector,
+      zone,
+      ROW_NUMBER() OVER(PARTITION BY name ORDER BY id DESC) as rn
+    FROM ${ref("tbl_builder_projects")}
+    WHERE name IS NOT NULL
+  )
+
+SELECT
+  p.id_lead,
+  DATE_TRUNC(p.fecha, MONTH) AS mes_ano,
+  p.dia_nombre,
+  p.fecha,
+  p.origen,
+  p.proyecto,
+  p.ciudad_proyecto,
+  p.constructora,
+  p.calificacion,
+  p.createdEmail AS email,
+  u.entity_key,
+  u.name AS usuario,
+  UPPER(g.name) AS tipo_usuario,
+  b.city,
+  b.sector AS Sector,
+  b.zone AS Zona,
+  CASE WHEN p.venta_efectiva = 1 THEN 'Si' ELSE 'No' END AS ventas_efectivas,
+  look.uid_entity AS uid_looker
+FROM leads_preparados AS p
+LEFT JOIN usuarios_unicos AS u 
+  ON p.createdEmail = u.email 
+  AND p.constructora = u.entity_key 
+  AND u.rn = 1
+LEFT JOIN proyectos_unicos AS b 
+  ON p.proyecto = b.name 
+  AND b.rn = 1
+LEFT JOIN ${ref("tbl_groups")} AS g 
+  ON u.id_group = g.id
+LEFT JOIN ${ref("tbl_entity_database")} AS ent 
+  ON p.constructora = ent.key
+LEFT JOIN ${ref("tbl_looker_board")} AS look 
+  ON ent.id_entity_database = look.entity_id
