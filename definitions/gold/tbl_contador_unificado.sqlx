@@ -1,10 +1,9 @@
 config {
-    type: "incremental",
+    type: "table",
     schema: "BI",
     name: "tbl_contador_unificado",
-    description: "Consolidado de interacciones analíticas unificando flujos de leads Pro, Lite v1, Lite v2 y seguimientos. Versión Incremental Segura.",
+    description: "Consolidado de interacciones analíticas unificando flujos de leads Pro, Lite v1, Lite v2 y seguimientos. Versión Completa con deduplicación diaria.",
     tags: ["diario"],
-    uniqueKey: ["id", "tipo_interaccion", "fecha_evento"], 
     bigquery: {
         partitionBy: "fecha_evento",
         clusterBy: ["constructora", "email"]
@@ -57,6 +56,7 @@ WITH
     QUALIFY ROW_NUMBER() OVER(PARTITION BY name ORDER BY id DESC) = 1
   ),
 
+  -- RAMA 1: Leads Lite V1 (14 columnas)
   leads_lite_v1 AS (
     SELECT
       CAST(l.id AS STRING) AS id_origen,
@@ -76,9 +76,10 @@ WITH
     FROM ${ref("tbl_sq_leads_light")} l
     LEFT JOIN proyectos_por_id proj 
       ON l.idProject = proj.id
-    ${when(incremental(), `WHERE DATE(l.createdAt) >= CURRENT_DATE() - INTERVAL 3 DAY`)}
+    -- Filtros incrementales removidos para traer todo el histórico
   ),
 
+  -- RAMA 2: Leads Lite V2 (14 columnas)
   leads_lite_v2 AS (
     SELECT
       CAST(l.id AS STRING) AS id_origen,
@@ -102,9 +103,10 @@ WITH
       ON l.userId = u.id
     LEFT JOIN proyectos_por_id proj 
       ON l.projectId = proj.id
-    ${when(incremental(), `WHERE DATE(l.createdAt) >= CURRENT_DATE() - INTERVAL 3 DAY`)}
+    -- Filtros incrementales removidos para traer todo el histórico
   ),
 
+  -- RAMA 3: Leads PRO (14 columnas)
   leads_pro AS (
     SELECT
       CAST(id AS STRING) AS id_origen,
@@ -122,33 +124,31 @@ WITH
       CAST(qualification AS STRING) AS calificacion,
       CAST(venta_efectiva AS INT64) AS venta_efectiva
     FROM ${ref("tbl_sq_leads")}
-    ${when(incremental(), `WHERE DATE(updated_at_auto) >= CURRENT_DATE() - INTERVAL 3 DAY`)}
+    -- Filtros incrementales removidos para traer todo el histórico
   ),
 
+  -- RAMA 4: Follow-ups deduplicados por día (14 columnas)
   followups_unificados AS (
     SELECT
       CAST(c.id_lead AS STRING) AS id_origen,
-      l.id_lead_pro,
+      CAST(REGEXP_REPLACE(CAST(c.identificacion AS STRING), r'\.', '') AS INT64) AS identificacion,
+      CAST(l.id_lead_pro AS STRING) AS id_lead_pro,
       DATE(TIMESTAMP(c.timestamp), "America/Bogota") AS fecha_evento,
       CAST(COALESCE(l.builderkey, c.constructora) AS STRING) AS builderkey,
-      l.createdEmail,
-      l.preselectaStatus,
-      CASE 
-        WHEN l.id_lead_pro IS NOT NULL THEN 'FOLLOW UP' 
-        ELSE 'REGISTRO PERDIDO' 
-      END AS tipo_interaccion,
+      CAST(l.createdEmail AS STRING) AS createdEmail,
+      CAST(l.preselectaStatus AS STRING) AS preselectaStatus,
+      CAST(CASE WHEN l.id_lead_pro IS NOT NULL THEN 'FOLLOW UP' ELSE 'REGISTRO PERDIDO' END AS STRING) AS tipo_interaccion,
       CAST(c.es_followup_origen AS BOOL) AS es_followup_flag,
-      l.contador_sq_snapshot,
-      l.proyecto,
-      l.ciudad_proyecto,
-      l.calificacion,
-      l.venta_efectiva
+      CAST(l.contador_sq_snapshot AS INT64) AS contador_sq_snapshot,
+      CAST(l.proyecto AS STRING) AS proyecto,
+      CAST(l.ciudad_proyecto AS STRING) AS ciudad_proyecto,
+      CAST(l.calificacion AS STRING) AS calificacion,
+      CAST(l.venta_efectiva AS INT64) AS venta_efectiva
     FROM ${ref("tbl_calculator_master_v2")} c 
     LEFT JOIN leads_pro l 
       ON CAST(c.id_lead AS STRING) = l.id_lead_pro
     WHERE c.es_followup_origen = TRUE 
-      ${when(incremental(), `AND DATE(c.timestamp) >= CURRENT_DATE() - INTERVAL 3 DAY`)}
-    -- DEDUPLICACIÓN PREVENTIVA: Si un lead tiene múltiples simulaciones el mismo día, se queda con la más reciente
+    -- DEDUPLICACIÓN PREVENTIVA: Si un lead tiene múltiples simulaciones en el mismo día, se queda con la más reciente
     QUALIFY ROW_NUMBER() OVER(
       PARTITION BY CAST(c.id_lead AS STRING), DATE(TIMESTAMP(c.timestamp), "America/Bogota") 
       ORDER BY c.timestamp DESC
