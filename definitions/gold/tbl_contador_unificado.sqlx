@@ -4,7 +4,7 @@ config {
     name: "tbl_contador_unificado",
     description: "Consolidado de interacciones analíticas unificando flujos de leads Pro, Lite v1, Lite v2 y seguimientos. Versión Incremental Segura.",
     tags: ["diario"],
-    uniqueKey: ["id", "tipo_interaccion"], 
+    uniqueKey: ["id", "tipo_interaccion", "fecha_evento"], 
     bigquery: {
         partitionBy: "fecha_evento",
         clusterBy: ["constructora", "email"]
@@ -57,7 +57,6 @@ WITH
     QUALIFY ROW_NUMBER() OVER(PARTITION BY name ORDER BY id DESC) = 1
   ),
 
-  -- Optimizamos el consumo de BigQuery aplicando el filtro incremental 'updated/createdAt' de 3 días dentro de cada CTE origen
   leads_lite_v1 AS (
     SELECT
       CAST(l.id AS STRING) AS id_origen,
@@ -129,7 +128,6 @@ WITH
   followups_unificados AS (
     SELECT
       CAST(c.id_lead AS STRING) AS id_origen,
-      CAST(REGEXP_REPLACE(CAST(c.identificacion AS STRING), r'\.', '') AS INT64) AS identificacion,
       l.id_lead_pro,
       DATE(TIMESTAMP(c.timestamp), "America/Bogota") AS fecha_evento,
       CAST(COALESCE(l.builderkey, c.constructora) AS STRING) AS builderkey,
@@ -150,6 +148,11 @@ WITH
       ON CAST(c.id_lead AS STRING) = l.id_lead_pro
     WHERE c.es_followup_origen = TRUE 
       ${when(incremental(), `AND DATE(c.timestamp) >= CURRENT_DATE() - INTERVAL 3 DAY`)}
+    -- DEDUPLICACIÓN PREVENTIVA: Si un lead tiene múltiples simulaciones el mismo día, se queda con la más reciente
+    QUALIFY ROW_NUMBER() OVER(
+      PARTITION BY CAST(c.id_lead AS STRING), DATE(TIMESTAMP(c.timestamp), "America/Bogota") 
+      ORDER BY c.timestamp DESC
+    ) = 1
   ),
 
   total_eventos AS (
