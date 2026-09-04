@@ -70,7 +70,7 @@ SELECT
   UPPER(TRIM(housingLawIndicator)) AS housingLawIndicator,
   UPPER(TRIM(HDCStatus)) AS HDCStatus,
   SAFE_CAST(followUpCounter AS INT64) AS followUpCounter,
-  SAFE_CAST(followUpActivated AS INT64) AS followUpActivated,
+  
   
   -- 7. METADATA DE SISTEMA
   SAFE_CAST(is_not_recent AS INT64) AS is_not_recent,

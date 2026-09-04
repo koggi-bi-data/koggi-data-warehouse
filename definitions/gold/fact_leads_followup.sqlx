@@ -99,9 +99,9 @@ raw_events AS (
   FROM ${ref("tbl_calculator_master_v2")} cal
   LEFT JOIN ${ref("tbl_sq_leads")} l_src
     ON l_src.id = cal.id_lead
-  LEFT JOIN ${ref("tbl_sq_leads_followup")} fw
+  LEFT JOIN ${ref("tbl_sq_fu_leads")} fw
     ON fw.calculator_id = cal.document_id
-  LEFT JOIN ${ref("tbl_sq_followup_states")} st
+  LEFT JOIN ${ref("tbl_sq_fu_states")} st
     ON fw.state = st.code
   LEFT JOIN ${ref("tbl_sq_score_validity")} sc
     ON fw.score_id = sc.id

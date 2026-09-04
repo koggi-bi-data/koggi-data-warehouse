@@ -3,6 +3,7 @@ config {
     uniqueKey: ["id"],
     database: "davinci-onegroup-prod",
     schema: "BI",
+    disabled: true,
     name: "tbl_profiling",
     description: "Tabla maestra de perfilamiento. Incluye cálculo de endeudamiento, roles (Titular/Codeudor) y conteo de causales de rechazo.",
     bigquery: {

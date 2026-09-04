@@ -244,14 +244,14 @@ declare({
 declare({
   database: "davinci-onegroup-prod",
   schema: "central_col_stream",
-  name: "tbl_sq_leads_followup",
+  name: "tbl_sq_fu_leads",
   description: "Tabla cruda que registra las interacciones y estados de seguimiento (follow-up) de los leads."
 });
 
 declare({
   database: "davinci-onegroup-prod",
   schema: "central_col_stream",
-  name: "tbl_sq_followup_states",
+  name: "tbl_sq_fu_states",
   description: "Tabla de parametria cruda que mapea los códigos de estado de seguimiento con sus etiquetas textuales correspondientes."
 });
 
